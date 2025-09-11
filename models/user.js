@@ -9,8 +9,8 @@ const userSchema = new mongoose.Schema(
             index: true
         },
         email: { type: String, required: true, index: true },
-        fullName: { type: String, required: true },
-        password: { type: String, required: true },
+        fullName: { type: String },
+        password: { type: String },
         avatar: { type: String, default: null },
         avatarPublicId: { type: String, default: null },
         phoneNumber: { type: String, default: null },

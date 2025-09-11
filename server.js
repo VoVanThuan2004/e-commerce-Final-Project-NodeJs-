@@ -4,7 +4,13 @@ const cors = require('cors');
 const mongoDB = require('./config/mongoDB');
 require('dotenv').config();
 const initAdminAccount = require('./init');
+const userRouter = require('./routers/userRouter');
+const brandRouter = require('./routers/brandRouter');
+const categoryRouter = require('./routers/categoryRouter');
+const attributeRouter = require('./routers/attributeRouter');
+const attributeValueRouter = require('./routers/attributeValueRouter');
 
+const PORT = process.env.PORT;
 app.use(cors());
 app.use(express.json());
 
@@ -20,7 +26,14 @@ mongoDB();
     }
 })();
 
+// router
+app.use(userRouter);
+app.use(brandRouter);
+app.use(categoryRouter);
+app.use(attributeRouter);
+app.use(attributeValueRouter);
+
 // Kết nối Server
-app.listen(() => {
-    console.log(`http://localhost:${process.env.PORT}`);
+app.listen(PORT, () => {
+    console.log(`http://localhost:${PORT}`);
 }) 

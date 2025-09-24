@@ -9,9 +9,11 @@ const brandRouter = require('./routers/brandRouter');
 const categoryRouter = require('./routers/categoryRouter');
 const attributeRouter = require('./routers/attributeRouter');
 const attributeValueRouter = require('./routers/attributeValueRouter');
+const PORT = process.env.PORT;const addressRouter = require('./routers/addressRouter');
 
-const PORT = process.env.PORT;
 app.use(cors());
+const bodyParser = require("body-parser");
+
 app.use(express.json());
 
 // Kết nói mongo database
@@ -32,7 +34,7 @@ app.use(brandRouter);
 app.use(categoryRouter);
 app.use(attributeRouter);
 app.use(attributeValueRouter);
-
+app.use(addressRouter);
 // Kết nối Server
 app.listen(PORT, () => {
     console.log(`http://localhost:${PORT}`);

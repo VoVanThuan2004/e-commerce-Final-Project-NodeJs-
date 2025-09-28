@@ -144,7 +144,7 @@ const deleteAttributeValue = async (req, res) => {
       return res.status(404).json({
         status: "error",
         code: 404,
-        message: "Giá trị thuộc tính không tồn tạii",
+        message: "Giá trị thuộc tính không tồn tại",
       });
     }
 

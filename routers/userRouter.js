@@ -47,6 +47,6 @@ router.get('/api/v1/users/profile', auth, userController.getUserProfile);
 router.put('/api/v1/admin/users/:userId', auth, upload.single("avatar"), userController.updateUserByAdmin);
 
 // Đăng xuất 
-router.post('/api/v1/auth/logout', auth, userController.logout);
+router.post('/api/v1/auth/logout', userController.logout);
 
 module.exports = router;

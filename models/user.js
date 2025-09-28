@@ -11,6 +11,7 @@ const userSchema = new mongoose.Schema(
         email: { type: String, required: true, index: true },
         fullName: { type: String },
         password: { type: String },
+        gender: { type: Number },
         avatar: { type: String, default: null },
         avatarPublicId: { type: String, default: null },
         phoneNumber: { type: String, default: null },

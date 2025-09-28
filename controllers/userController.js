@@ -104,7 +104,6 @@ const login = async (req, res) => {
   }
 };
 
-
 const loginSocialAccount = async (req, res) => {
   const { provider, idToken } = req.body;
   if (!provider || !idToken) {
@@ -316,14 +315,22 @@ const register = async (req, res) => {
 };
 
 const verifyOTPCreateAccount = async (req, res) => {
-  const { email, fullName, otp, password, address } = req.body;
+  const { email, fullName, gender, otp, password, address } = req.body;
 
-  if (!email || !fullName || !otp || !password || !address) {
+  if (!email || !fullName || !gender || !otp || !password || !address) {
     return res.status(400).json({
       status: "error",
       code: 400,
       message:
-        "Vui lòng nhập đầy đủ thông tin: email, fullName, otp, password, address",
+        "Vui lòng nhập đầy đủ thông tin: email, fullName, gender, otp, password, address",
+    });
+  }
+
+  if (password.length < 8) {
+    return res.status(400).json({
+      status: "error",
+      code: 400,
+      message: "Mật khẩu phải có ít nhất 8 ký tự",
     });
   }
 
@@ -378,6 +385,7 @@ const verifyOTPCreateAccount = async (req, res) => {
 
     // Tạo tài khoản
     user.fullName = fullName;
+    user.gender = gender;
     user.password = passwordHashed;
     user.isActive = true;
     user.reset_otp = null;
@@ -607,6 +615,14 @@ const verifyOTPRecoveryPassword = async (req, res) => {
       });
     }
 
+    if (password.length < 8) {
+      return res.status(400).json({
+        status: "error",
+        code: 400,
+        message: "Mật khẩu phải có ít nhất 8 ký tự",
+      });
+    }
+
     // Tạo password mới cho user
     const passwordHashed = await bcrypt.hash(password, 10);
     user.password = passwordHashed;
@@ -633,9 +649,9 @@ const refreshToken = async (req, res) => {
   const { refreshToken } = req.body;
   if (!refreshToken) {
     return res.status(400).json({
-      status: 'error',
+      status: "error",
       code: 400,
-      message: 'Vui lòng nhập thông tin mã refresh token'
+      message: "Vui lòng nhập thông tin mã refresh token",
     });
   }
 
@@ -643,9 +659,9 @@ const refreshToken = async (req, res) => {
     const refreshTokenDB = await RefreshToken.findOne({ refreshToken });
     if (!refreshTokenDB) {
       return res.status(404).json({
-        status: 'error',
+        status: "error",
         code: 404,
-        message: 'Mã refresh token không hợp lệ'
+        message: "Mã refresh token không hợp lệ",
       });
     }
 
@@ -653,18 +669,18 @@ const refreshToken = async (req, res) => {
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({
-        status: 'error',
+        status: "error",
         code: 404,
-        message: 'Người dùng không tồn tại'
+        message: "Người dùng không tồn tại",
       });
     }
 
     const role = await Role.findOne({ _id: user.roleId });
     if (!role) {
       return res.status(404).json({
-        status: 'error',
+        status: "error",
         code: 404,
-        message: 'Vai trò cho người dùng không tồn tại'
+        message: "Vai trò cho người dùng không tồn tại",
       });
     }
 
@@ -678,11 +694,11 @@ const refreshToken = async (req, res) => {
       {
         userId,
         fullName: user.fullName,
-        roleName: role.roleName
+        roleName: role.roleName,
       },
       SECRET_KEY,
       {
-        expiresIn: '24h'
+        expiresIn: "24h",
       }
     );
 
@@ -691,11 +707,11 @@ const refreshToken = async (req, res) => {
       {
         userId,
         fullName: user.fullName,
-        roleName: role.roleName
+        roleName: role.roleName,
       },
       SECRET_KEY,
       {
-        expiresIn: '30d'
+        expiresIn: "30d",
       }
     );
 
@@ -705,17 +721,17 @@ const refreshToken = async (req, res) => {
       refreshToken: newRefreshToken,
       userAgent: req.headers["user-agent"],
       ipAddress: req.ip,
-      expiredAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-    })
+      expiredAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    });
 
     return res.status(200).json({
-      status: 'success',
+      status: "success",
       code: 200,
-      message: 'Tạo refresh token mới thành công',
+      message: "Tạo refresh token mới thành công",
       data: {
         accessToken: newAccessToken,
-        refreshToken: newRefreshToken
-      }
+        refreshToken: newRefreshToken,
+      },
     });
   } catch (error) {
     return res.status(500).json({
@@ -724,8 +740,7 @@ const refreshToken = async (req, res) => {
       message: "Lỗi hệ thống: " + error.message,
     });
   }
-}
-
+};
 
 // API lấy danh sách người dùng
 const getAllUsers = async (req, res) => {
@@ -757,7 +772,7 @@ const getAllUsers = async (req, res) => {
       User.countDocuments({ roleId: { $ne: role._id } }),
       User.find({ roleId: { $ne: role._id } })
         .select(
-          "_id email fullName avatar phoneNumber loyaltyPoints isActive createdAt updatedAt"
+          "_id email fullName avatar phoneNumber gender loyaltyPoints isActive createdAt updatedAt"
         )
         .skip(skip)
         .limit(limit)
@@ -883,12 +898,12 @@ const updateUser = async (req, res) => {
     });
   }
 
-  const { fullName, phoneNumber } = req.body;
-  if (!fullName || !phoneNumber) {
+  const { fullName, phoneNumber, gender } = req.body;
+  if (!fullName || !phoneNumber || !gender) {
     return res.status(400).json({
       status: "error",
       code: 400,
-      message: "Vui lòng nhập thông tin: fullName, phoneNumber",
+      message: "Vui lòng nhập thông tin: fullName, phoneNumber, gender",
     });
   }
 
@@ -915,6 +930,7 @@ const updateUser = async (req, res) => {
 
     user.fullName = fullName;
     user.phoneNumber = phoneNumber;
+    user.gender = gender;
     await user.save();
 
     return res.status(200).json({
@@ -944,7 +960,7 @@ const getUserProfile = async (req, res) => {
 
   try {
     const user = await User.findById(userId).select(
-      "_id email fullName avatar phoneNumber loyaltyPoints isActive"
+      "_id email fullName avatar phoneNumber gender loyaltyPoints isActive"
     );
     if (!user) {
       return res.status(404).json({
@@ -955,12 +971,11 @@ const getUserProfile = async (req, res) => {
     }
 
     return res.status(200).json({
-      status: 'success',
+      status: "success",
       code: 200,
-      message: 'Lấy thông tin profile của người dùng',
-      data: user
+      message: "Lấy thông tin profile của người dùng",
+      data: user,
     });
-
   } catch (error) {
     return res.status(500).json({
       status: "error",
@@ -973,29 +988,29 @@ const getUserProfile = async (req, res) => {
 // API cập nhật thông tin người dùng dành cho admin
 const updateUserByAdmin = async (req, res) => {
   const roleName = req.user.roleName;
-  if (roleName !== 'ADMIN') {
+  if (roleName !== "ADMIN") {
     return res.status(403).json({
-      status: 'error',
+      status: "error",
       code: 403,
-      message: 'Không có quyền truy cập tài nguyên'
+      message: "Không có quyền truy cập tài nguyên",
     });
   }
 
   const userId = req.params.userId;
   if (!userId) {
     return res.status(400).json({
-      status: 'error',
+      status: "error",
       code: 400,
-      message: 'Tham số userId hiện đang trống'
+      message: "Tham số userId hiện đang trống",
     });
   }
 
-  const { fullName, phoneNumber } = req.body;
-  if (!fullName || !phoneNumber) {
+  const { fullName, phoneNumber, gender } = req.body;
+  if (!fullName || !phoneNumber || !gender) {
     return res.status(400).json({
       status: "error",
       code: 400,
-      message: "Vui lòng nhập thông tin: fullName, phoneNumber",
+      message: "Vui lòng nhập thông tin: fullName, phoneNumber, gender",
     });
   }
 
@@ -1003,14 +1018,15 @@ const updateUserByAdmin = async (req, res) => {
     let user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({
-        status: 'error',
+        status: "error",
         code: 404,
-        message: 'Người dùng không tồn tại'
+        message: "Người dùng không tồn tại",
       });
     }
 
     user.fullName = fullName;
     user.phoneNumber = phoneNumber;
+    user.gender = gender;
 
     // Nếu có upload ảnh
     if (req.file) {
@@ -1026,9 +1042,9 @@ const updateUserByAdmin = async (req, res) => {
     user = await user.save();
 
     return res.status(200).json({
-      status: 'success',
+      status: "success",
       code: 200,
-      message: 'Cập nhật thông tin người dùng thành công',
+      message: "Cập nhật thông tin người dùng thành công",
       data: {
         _id: user._id,
         email: user.email,
@@ -1038,9 +1054,9 @@ const updateUserByAdmin = async (req, res) => {
         loyaltyPoints: user.loyaltyPoints,
         isActive: user.isActive,
         createdAt: user.createdAt,
-        updatedAt: user.updatedAt
-      }
-    })
+        updatedAt: user.updatedAt,
+      },
+    });
   } catch (error) {
     return res.status(500).json({
       status: "error",
@@ -1048,7 +1064,7 @@ const updateUserByAdmin = async (req, res) => {
       message: "Lỗi hệ thống: " + error.message,
     });
   }
-}
+};
 
 module.exports = {
   login,

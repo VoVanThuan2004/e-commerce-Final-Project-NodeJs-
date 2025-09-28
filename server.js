@@ -21,6 +21,8 @@ const { initSocket } = require("./config/socket");
 const http = require("http");
 const PORT = process.env.PORT;
 const session = require("express-session");
+const cartRouter = require("./routers/cartRouter");
+const cleanupCartItem = require("./cron/cleanupCartItem");
 
 app.use(cors());
 app.use(express.json());
@@ -67,8 +69,10 @@ app.use(ratingRouter);
 app.use(couponRouter);
 app.use(wishListRouter);
 app.use(addressRouter);
+app.use(cartRouter);
 
 // Kết nối Server
 server.listen(PORT, () => {
   console.log(`http://localhost:${PORT}`);
+  cleanupCartItem();
 });

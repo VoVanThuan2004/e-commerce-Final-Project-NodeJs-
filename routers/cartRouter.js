@@ -9,5 +9,9 @@ router.post("/api/v1/cart", cartController.addToCart);
 router.delete("/api/v1/cart/:cartItemId", cartController.deleteToCart);
 
 // Cập nhật số lượng item trong giỏ hàng
+router.put("/api/v1/cart/quantity/:cartItemId", cartController.updateQuantityCartItem);
+
+// Lấy ra thông tin giỏ hàng
+router.get("/api/v1/cart", cartController.getCart);
 
 module.exports = router;

@@ -9,8 +9,6 @@ const cartSchema = new mongoose.Schema(
       default: null,
     },
     sessionId: { type: String, default: null },
-    totalPrice: { type: Number, default: 0 },
-    totalItems: { type: Number, default: 0 },
     expires_at: { type: Date, default: null },
   },
   {

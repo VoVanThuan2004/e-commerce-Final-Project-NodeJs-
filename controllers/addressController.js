@@ -13,10 +13,10 @@ const createAddress = async (req, res) => {
       data: savedAddress,
     });
   } catch (error) {
-    return res.status(400).json({
+    return res.status(500).json({
       status: "error",
-      code: 400,
-      message: error.message,
+      code: 500,
+      message: "Lỗi hệ thống: " + error.message,
     });
   }
 };
@@ -45,10 +45,10 @@ const updateAddress = async (req, res) => {
       data: updated,
     });
   } catch (error) {
-    return res.status(400).json({
+    return res.status(500).json({
       status: "error",
-      code: 400,
-      message: error.message,
+      code: 500,
+      message: "Lỗi hệ thống: " + error.message,
     });
   }
 };
@@ -56,9 +56,8 @@ const updateAddress = async (req, res) => {
 // Xóa địa chỉ
 const deleteAddress = async (req, res) => {
   try {
-const deleted = await Address.findOneAndDelete({
+    const deleted = await Address.findOneAndDelete({
       _id: req.params.addressId,
-      userId: req.user.userId, // đảm bảo dùng đúng req.user.userId
     });
     if (!deleted) {
       return res.status(404).json({
@@ -68,17 +67,16 @@ const deleted = await Address.findOneAndDelete({
       });
     }
 
-
     return res.json({
       status: "success",
       code: 200,
       message: "Xóa địa chỉ thành công",
     });
   } catch (error) {
-    return res.status(400).json({
+    return res.status(500).json({
       status: "error",
-      code: 400,
-      message: error.message,
+      code: 500,
+      message: "Lỗi hệ thống: " + error.message,
     });
   }
 };
@@ -86,9 +84,13 @@ const deleted = await Address.findOneAndDelete({
 // Lấy tất cả địa chỉ của user
 const getAllAddresses = async (req, res) => {
   try {
-    const addresses = await Address.find({ userId: req.user.userId }).sort({
-      createdAt: -1,
-    });
+    const addresses = await Address.find({ userId: req.user.userId })
+      .sort({
+        createdAt: -1,
+      })
+      .select(
+        "_id userId wardCode ward districtCode district provinceCode province addressDetail isDefault"
+      );
 
     return res.json({
       status: "success",
@@ -100,7 +102,7 @@ const getAllAddresses = async (req, res) => {
     return res.status(500).json({
       status: "error",
       code: 500,
-      message: error.message,
+      message: "Lỗi hệ thống: " + error.message,
     });
   }
 };
@@ -116,9 +118,11 @@ const setDefaultAddress = async (req, res) => {
 
     // Set địa chỉ được chọn thành mặc định
     const updated = await Address.findOneAndUpdate(
-      { _id: req.params.addressId,userId: req.user.userId },
+      { _id: req.params.addressId },
       { $set: { isDefault: true } },
       { new: true }
+    ).select(
+      "_id userId wardCode ward districtCode district provinceCode province addressDetail isDefault"
     );
 
     if (!updated) {
@@ -136,10 +140,10 @@ const setDefaultAddress = async (req, res) => {
       data: updated,
     });
   } catch (error) {
-    return res.status(400).json({
+    return res.status(500).json({
       status: "error",
-      code: 400,
-      message: error.message,
+      code: 500,
+      message: "Lỗi hệ thống: " + error.message,
     });
   }
 };

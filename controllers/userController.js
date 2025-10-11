@@ -742,6 +742,87 @@ const refreshToken = async (req, res) => {
   }
 };
 
+const setPassword = async (req, res) => {
+  const { email, token, password, confirmPassword } = req.body;
+  if (!email || !token) {
+    s;
+    return res.status(400).json({
+      status: "error",
+      code: 400,
+      message: "Vui lòng nhập thông tin email, mã token",
+    });
+  }
+
+  const decoded = jwt.verify(token, process.env.SECRET_KEY);
+  // Kiểm tra email và email trong token
+  if (email !== decoded.email) {
+    return res.status(400).json({
+      status: "error",
+      code: 400,
+      message: "Email không hợp lệ",
+    });
+  }
+
+  // Kiểm tra type trong token
+  if (decoded.type !== "set_password") {
+    return res.status(400).json({
+      status: "error",
+      code: 400,
+      message: "Token không hợp lệ",
+    });
+  }
+
+  // Kiểm tra password
+  if (password !== confirmPassword) {
+    return res.status(400).json({
+      status: "error",
+      code: 400,
+      message: "Mật khẩu xác nhận không hợp lệ",
+    });
+  }
+
+  // Kiểm tra độ dài password
+  if (password.length < 8) {
+    return res.status(400).json({
+      status: "error",
+      code: 400,
+      message: "Mật khẩu phải có ít nhất 8 ký tự",
+    });
+  }
+
+  try {
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({
+        status: "error",
+        code: 404,
+        message: "Người dùng không tồn tại",
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // cập nhật password
+    user.password = hashedPassword;
+    user.isActive = true;
+    await user.save();
+  } catch (error) {
+    if (error.name === "TokenExpiredError") {
+      return res.status(400).json({
+        status: "error",
+        code: 400,
+        message: "Liên kết đặt mật khẩu đã hết hạn. Vui lòng yêu cầu lại.",
+      });
+    }
+
+    return res.status(500).json({
+      status: "error",
+      code: 500,
+      message: "Lỗi hệ thống: " + error.mesage,
+    });
+  }
+};
+
 // API lấy danh sách người dùng
 const getAllUsers = async (req, res) => {
   const roleName = req.user.roleName;
@@ -1081,4 +1162,5 @@ module.exports = {
   getUserProfile,
   updateUserByAdmin,
   refreshToken,
+  setPassword,
 };

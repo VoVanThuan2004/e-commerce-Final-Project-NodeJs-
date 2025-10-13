@@ -18,4 +18,7 @@ router.delete("/api/v1/product-variant/:productVariantId", auth, productVariantC
 // API cập nhật tồn kho
 router.put("/api/v1/product-variant/:productVariantId/inventory", auth, productVariantController.updateInventory);
 
+// API thay đổi trạng thái (tắt - bật) biến thể
+router.put("/api/v1/product-variant/:productVariantId/status", auth, productVariantController.updateStatusProductVariant);
+
 module.exports = router;

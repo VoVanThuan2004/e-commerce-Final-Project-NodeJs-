@@ -4,6 +4,7 @@ const AttributeValue = require("../models/attributeValue");
 const VariantImage = require("../models/variantImage");
 const Product = require("../models/product");
 const Inventory = require("../models/inventory");
+const CartItem = require("../models/cartItem");
 const cloudinary = require("../config/cloudinary");
 const client = require("../config/elasticsearch");
 const mongoose = require("mongoose");
@@ -201,6 +202,7 @@ const addProductVariant = async (req, res) => {
 const updateProductVariant = async (req, res) => {
   const roleName = req.user.roleName;
   if (roleName !== "ADMIN") {
+    await deleteUploadedFile(req.files);
     return res.status(403).json({
       status: "error",
       code: 403,
@@ -229,6 +231,7 @@ const updateProductVariant = async (req, res) => {
     !height ||
     !length
   ) {
+    await deleteUploadedFile(req.files);
     return res.status(400).json({
       status: "error",
       code: 400,
@@ -238,6 +241,7 @@ const updateProductVariant = async (req, res) => {
   }
 
   if (originalPrice > sellingPrice) {
+    await deleteUploadedFile(req.files);
     return res.status(400).json({
       status: "error",
       code: 400,
@@ -254,6 +258,7 @@ const updateProductVariant = async (req, res) => {
       productVariantId
     ).session(session);
     if (!productVariant) {
+      await deleteUploadedFile(req.files);
       await session.abortTransaction();
       return res.status(404).json({
         status: "error",
@@ -265,6 +270,7 @@ const updateProductVariant = async (req, res) => {
     // 2. Ktra sản phẩm gốc
     const product = await Product.findById(productId).session(session);
     if (!product) {
+      await deleteUploadedFile(req.files);
       await session.abortTransaction();
       return res.status(404).json({
         status: "error",
@@ -442,6 +448,9 @@ const deleteProductVariant = async (req, res) => {
     await VariantAttribute.deleteMany({ productVariantId }).session(session);
     await VariantImage.deleteMany({ productVariantId }).session(session);
     await Inventory.findOneAndDelete({ productVariantId }).session(session);
+
+    // Xóa cartItem đang tham chiếu đến biến thể
+    await CartItem.deleteMany({ productVariantId }).session(session);
 
     // 4. Cập nhật lại giá sản phẩm gốc
     const allVariants = await ProductVariant.find({
@@ -621,6 +630,18 @@ const updateStatusProductVariant = async (req, res) => {
     });
   }
 };
+
+
+const deleteUploadedFile = async (files) => {
+  if (files.length > 0) {
+    await Promise.all(
+      files.map(async (file) => {
+        await cloudinary.uploader.destroy(file.filename);
+      })
+    );
+  }
+};
+
 
 module.exports = {
   addProductVariant,

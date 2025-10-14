@@ -10,3 +10,6 @@ const storage = new CloudinaryStorage({
 });
 
 module.exports = storage;
+
+// 1. upload ảnh lên cloudinary
+// 2. Nếu lỗi -> xóa ảnh trên cloudinary

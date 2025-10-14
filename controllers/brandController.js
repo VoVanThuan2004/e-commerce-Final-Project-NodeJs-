@@ -6,6 +6,7 @@ const cloudinary = require("../config/cloudinary");
 const createBrand = async (req, res) => {
   const roleName = req.user.roleName;
   if (roleName !== "ADMIN") {
+    await cloudinary.uploader.destroy(req.file.filename);
     return res.status(403).json({
       status: "error",
       code: 403,
@@ -15,6 +16,7 @@ const createBrand = async (req, res) => {
 
   const { brandName } = req.body;
   if (!brandName) {
+    await cloudinary.uploader.destroy(req.file.filename);
     return res.status(400).json({
       status: "error",
       code: 400,
@@ -83,6 +85,7 @@ const getAllBrands = async (req, res) => {
 const updateBrand = async (req, res) => {
   const roleName = req.user.roleName;
   if (roleName !== "ADMIN") {
+    await deleteUploadedFile(req.file);
     return res.status(403).json({
       status: "error",
       code: 403,
@@ -93,6 +96,7 @@ const updateBrand = async (req, res) => {
   const brandId = req.params.brandId;
   const { brandName } = req.body;
   if (!brandId || !brandName) {
+    await deleteUploadedFile(req.file);
     return res.status(400).json({
       status: "error",
       code: 400,
@@ -102,6 +106,7 @@ const updateBrand = async (req, res) => {
 
   // Kiểm tra có phải là ObjectId không
   if (!mongoose.Types.ObjectId.isValid(brandId)) {
+    await deleteUploadedFile(req.file);
     return res.status(400).json({
       status: "error",
       code: 400,
@@ -112,6 +117,7 @@ const updateBrand = async (req, res) => {
   try {
     const brand = await Brand.findById(brandId);
     if (!brand) {
+      await deleteUploadedFile(req.file);
       return res.status(404).json({
         status: "error",
         code: 404,
@@ -122,7 +128,9 @@ const updateBrand = async (req, res) => {
     // Nếu có upload logo mới
     if (req.file) {
       // Xóa ảnh cũ
-      await cloudinary.uploader.destroy(brand.logoPublicId);
+      if (brand.logo) {
+        await cloudinary.uploader.destroy(brand.logoPublicId);
+      }
 
       brand.logo = req.file.path;
       brand.logoPublicId = req.file.filename;
@@ -213,6 +221,14 @@ const deleteBrand = async (req, res) => {
     });
   }
 };
+
+// Function xóa ảnh upload cloudinary
+const deleteUploadedFile = async (file) => {
+  if (file && file.filename) {
+    await cloudinary.uploader.destroy(file.filename);
+  }
+};
+
 
 module.exports = {
   createBrand,

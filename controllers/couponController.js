@@ -1,6 +1,6 @@
 const Coupon = require("../models/coupon");
 const mongoose = require("mongoose");
-
+//controller/couponController.js
 const addCoupon = async (req, res) => {
   const roleName = req.user.roleName;
   if (roleName !== "ADMIN") {
@@ -195,3 +195,4 @@ module.exports = {
   deleteCoupon,
   getAllCoupons,
 };
+   

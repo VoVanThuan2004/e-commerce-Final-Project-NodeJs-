@@ -80,11 +80,9 @@ const orderSchema = new mongoose.Schema(
     },
     shippingFee: {
       type: Number,
-      required: true,
     },
     estimatedDelivery: {
       type: Date,
-      required: true,
     },
   },
   {

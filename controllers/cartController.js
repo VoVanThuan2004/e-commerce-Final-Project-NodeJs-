@@ -7,50 +7,64 @@ const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
 const addToCart = async (req, res) => {
-  // Lấy mã token nếu user có đăng nhập
-  if (req.headers.authorization) {
-    const SECRET_KEY = process.env.SECRET_KEY;
-    const authHeader = req.headers.authorization;
-    const token = authHeader.split(" ")[1];
-    const decoded = jwt.verify(token, SECRET_KEY);
-    req.user = decoded;
-  }
-
-  const userId = req.user ? req.user.userId : null;
-  const sessionId = req.sessionID ? req.sessionID : null;
-
-  // Nhận mã sản phẩm, số lượng
-  const { productVariantId } = req.body;
-  if (!mongoose.Types.ObjectId.isValid(productVariantId)) {
-    return res.status(400).json({
-      status: "error",
-      code: 400,
-      message: "ID sản phẩm không hợp lệ",
-    });
-  }
-
   try {
-    let cart;
-
-    // Nếu user login thì dùng user_id, còn không thì dùng session_id (client gửi session_id trong cookie/localStorage)
-    if (userId) {
-      cart = await Cart.findOne({ userId });
-    } else if (sessionId) {
-      cart = await Cart.findOne({ sessionId });
+    // ===== 1. Xác thực người dùng nếu có token =====
+    let userId = null;
+    if (req.headers.authorization) {
+      const SECRET_KEY = process.env.SECRET_KEY;
+      const authHeader = req.headers.authorization;
+      const token = authHeader.split(" ")[1];
+      const decoded = jwt.verify(token, SECRET_KEY);
+      userId = decoded.userId;
     }
 
-    // Ktra có giỏ hàng chưa -> nếu chưa có tạo giỏ hàng
-    if (!cart) {
-      cart = await Cart.create({
-        userId: userId ? userId : null,
-        sessionId: userId ? null : sessionId,
-        expires_at: userId
-          ? null
-          : new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+    // ===== 2. Lấy sessionId từ client (gửi qua req.body) =====
+    const { sessionId, productVariantId } = req.body;
+
+    if (!productVariantId) {
+      return res.status(400).json({
+        status: "error",
+        code: 400,
+        message: "Thiếu ID sản phẩm biến thể",
       });
     }
 
-    // Ktra sản phẩm biến thể
+    if (!mongoose.Types.ObjectId.isValid(productVariantId)) {
+      return res.status(400).json({
+        status: "error",
+        code: 400,
+        message: "ID sản phẩm không hợp lệ",
+      });
+    }
+
+    if (!userId && !sessionId) {
+      return res.status(400).json({
+        status: "error",
+        code: 400,
+        message: "Thiếu sessionId cho người dùng chưa đăng nhập",
+      });
+    }
+
+    // ===== 3. Tìm hoặc tạo giỏ hàng =====
+    let cart;
+
+    if (userId) {
+      cart = await Cart.findOne({ userId });
+    } else {
+      cart = await Cart.findOne({ sessionId });
+    }
+
+    if (!cart) {
+      cart = await Cart.create({
+        userId: userId || null,
+        sessionId: userId ? null : sessionId,
+        expires_at: userId
+          ? null
+          : new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 ngày
+      });
+    }
+
+    // ===== 4. Kiểm tra sản phẩm biến thể có tồn tại không =====
     const productVariant = await ProductVariant.findById(productVariantId);
     if (!productVariant) {
       return res.status(400).json({
@@ -60,15 +74,16 @@ const addToCart = async (req, res) => {
       });
     }
 
-    // Ktra sản phẩm này có trong giỏ hàng chưa -> nếu có thì cộng thêm quantity, ngược lại tạo mới
-    const cartItem = await CartItem.findOne({
+    // ===== 5. Kiểm tra sản phẩm đã có trong giỏ chưa =====
+    let cartItem = await CartItem.findOne({
+      cartId: cart._id,
       productVariantId: productVariant._id,
     });
 
     if (cartItem) {
       cartItem.quantity += 1;
       await cartItem.save();
-    } else if (!cartItem) {
+    } else {
       await CartItem.create({
         cartId: cart._id,
         productVariantId: productVariant._id,
@@ -76,12 +91,18 @@ const addToCart = async (req, res) => {
       });
     }
 
+    // ===== 6. Trả về kết quả =====
     return res.status(200).json({
       status: "success",
       code: 200,
       message: "Đã thêm sản phẩm vào giỏ hàng",
+      data: {
+        cartId: cart._id,
+        sessionId: cart.sessionId,
+      },
     });
   } catch (error) {
+    console.error("Lỗi thêm giỏ hàng:", error);
     return res.status(500).json({
       status: "error",
       code: 500,
@@ -197,17 +218,29 @@ const updateQuantityCartItem = async (req, res) => {
 
 const getCart = async (req, res) => {
   try {
+    // ===== 1. Giải mã token nếu người dùng đăng nhập =====
+    let userId = null;
     if (req.headers.authorization) {
       const SECRET_KEY = process.env.SECRET_KEY;
       const authHeader = req.headers.authorization;
       const token = authHeader.split(" ")[1];
       const decoded = jwt.verify(token, SECRET_KEY);
-      req.user = decoded;
+      userId = decoded.userId;
     }
 
-    const userId = req.user ? req.user.userId : null;
-    const sessionId = req.sessionID ? req.sessionID : null;
+    // ===== 2. Lấy sessionId từ client =====
+    // FE có thể gửi qua body, params hoặc query, ở đây mình linh hoạt hỗ trợ cả 2
+    const sessionId = req.query.sessionId || null;
 
+    // if (!userId && !sessionId) {
+    //   return res.status(400).json({
+    //     status: "error",
+    //     code: 400,
+    //     message: "Thiếu sessionId cho người dùng chưa đăng nhập",
+    //   });
+    // }
+
+    // ===== 3. Tìm giỏ hàng =====
     let cart;
     if (userId) {
       cart = await Cart.findOne({ userId }).select("_id userId");
@@ -215,16 +248,18 @@ const getCart = async (req, res) => {
       cart = await Cart.findOne({ sessionId }).select("_id sessionId");
     }
 
-    // Nếu chưa có giỏ hàng tạo mới,
+    // ===== 4. Nếu chưa có giỏ hàng → tạo mới =====
     if (!cart) {
       cart = await Cart.create({
-        userId: userId ? userId : null,
+        userId: userId || null,
         sessionId: userId ? null : sessionId,
-        expires_at: userId ? null : new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
+        expires_at: userId
+          ? null
+          : new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 ngày
       });
     }
 
-    // Lấy danh sách item trong giỏ hàng
+    // ===== 5. Lấy danh sách sản phẩm trong giỏ hàng =====
     const cartItems = await CartItem.aggregate([
       {
         $match: { cartId: cart._id },
@@ -237,15 +272,12 @@ const getCart = async (req, res) => {
           as: "productVariant",
         },
       },
-
       {
         $unwind: {
           path: "$productVariant",
           preserveNullAndEmptyArrays: true,
         },
       },
-
-      // lấy ảnh sản phẩm
       {
         $lookup: {
           from: "variantimages",
@@ -256,31 +288,19 @@ const getCart = async (req, res) => {
                 $expr: { $eq: ["$productVariantId", "$$variantId"] },
               },
             },
-
-            {
-              $sort: { createdAt: 1 },
-            },
-
-            {
-              $limit: 1,
-            },
-            {
-              $project: {
-                imageUrl: 1,
-              },
-            },
+            { $sort: { createdAt: 1 } },
+            { $limit: 1 },
+            { $project: { imageUrl: 1 } },
           ],
           as: "variantimage",
         },
       },
-
       {
         $unwind: {
           path: "$variantimage",
           preserveNullAndEmptyArrays: true,
         },
       },
-
       {
         $project: {
           quantity: 1,
@@ -292,16 +312,18 @@ const getCart = async (req, res) => {
       },
     ]);
 
+    // ===== 6. Trả về kết quả =====
     return res.status(200).json({
-    status: "success",
-    code: 200,
-    message: "Lấy thông tin giỏ hàng",
-    data: {
-      cart,
-      cartItems,
-    },
-  });
+      status: "success",
+      code: 200,
+      message: "Lấy thông tin giỏ hàng thành công",
+      data: {
+        cart,
+        cartItems,
+      },
+    });
   } catch (error) {
+    console.error("Lỗi lấy giỏ hàng:", error);
     return res.status(500).json({
       status: "error",
       code: 500,

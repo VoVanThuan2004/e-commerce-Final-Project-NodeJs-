@@ -6,6 +6,7 @@ const productSchema = new mongoose.Schema({
     description: { type: String, required: true },
     defaultImage: { type: String, required: true },
     defaultImagePublicId: { type: String, required: true },
+    status: { type: Boolean, default: true},
     brandId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Brand',

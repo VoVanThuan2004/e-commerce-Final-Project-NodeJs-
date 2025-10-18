@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const orderItemSchema = new mongoose.Schema(
   {
     productVariantId: {
-      type: Number,
+      type: mongoose.Schema.Types.ObjectId,
       ref: "ProductVariants",
       required: true,
       index: true,
@@ -13,11 +13,7 @@ const orderItemSchema = new mongoose.Schema(
       required: true,
     },
     price: {
-      type: String, // Lưu ý: price được định nghĩa là varchar trong yêu cầu
-      required: true,
-    },
-    imageUrl: {
-      type: String,
+      type: Number, 
       required: true,
     },
     quantity: {

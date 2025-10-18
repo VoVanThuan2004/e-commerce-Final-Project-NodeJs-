@@ -577,7 +577,7 @@ const viewDetailProduct = async (req, res) => {
     const productVariants = await ProductVariant.find({
       productId,
     }).select(
-      "_id name originalPrice sellingPrice isActive createdAt updatedAt"
+      "_id name originalPrice sellingPrice isActive createdAt updatedAt weight width height length"
     );
 
     // 3. Map thêm attribute cho từng biến thể
@@ -858,13 +858,81 @@ const updateStatusProduct = async (req, res) => {
   }
 };
 
+const deleteProduct = async (req, res) => {
+  const productId = req.params.productId;
+  if (!mongoose.Types.ObjectId.isValid(productId)) {
+    return res.status(400).json({
+      status: "error",
+      code: 400,
+      message: "ID sản phẩm không hợp lệ",
+    });
+  }
+  try {
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({
+        status: "error",
+        code: 404,
+        message: "Sản phẩm không tồn tại",
+      });
+    }
+
+    // Kiểm tra xem product hiện tại có biến thể tham chiếu không -> nếu có -> không cho xóa
+    const productVariant = await ProductVariant.findOne({ productId });
+    if (productVariant) {
+      return res.status(400).json({
+        status: "error",
+        code: 400,
+        message:
+          "Không thể xóa sản phẩm, vì hiện tại sản phẩm có các biến thể sản phẩm đang tồn tại",
+      });
+    }
+
+    // Xóa ảnh trên Cloudinary (nếu có)
+    if (product.defaultImagePublicId) {
+      try {
+        await cloudinary.uploader.destroy(product.defaultImagePublicId);
+      } catch (err) {
+        console.warn("Không thể xóa ảnh trên Cloudinary:", err.message);
+      }
+    }
+
+    // Xóa trên Elasticsearch
+    try {
+      await client.delete({
+        index: "products",
+        id: productId.toString(),
+      });
+    } catch (esError) {
+      console.warn(
+        "Không thể xóa sản phẩm trên Elasticsearch:",
+        esError.message
+      );
+    }
+
+    // Xóa trong MongoDB
+    await Product.findByIdAndDelete(productId);
+
+    return res.status(200).json({
+      status: "success",
+      code: 200,
+      message: "Xóa sản phẩm thành công",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: "error",
+      code: 500,
+      message: "Lỗi hệ thống: " + error.message,
+    });
+  }
+};
+
 // Function xóa ảnh upload cloudinary
 const deleteUploadedFile = async (file) => {
   if (file && file.filename) {
     await cloudinary.uploader.destroy(file.filename);
   }
 };
-
 
 module.exports = {
   addProduct,
@@ -876,4 +944,5 @@ module.exports = {
   viewDetailProduct,
   chooseProductVariant,
   updateStatusProduct,
+  deleteProduct,
 };

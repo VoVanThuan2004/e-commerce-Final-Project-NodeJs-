@@ -971,16 +971,19 @@ const changePassword = async (req, res) => {
 // API cập nhật thông tin người dùng
 const updateUser = async (req, res) => {
   const userId = req.user.userId;
-  if (!userId) {
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    await deleteUploadedFile(req.file);
     return res.status(400).json({
       status: "error",
       code: 400,
-      message: "ID người dùng không tồn tại",
+      message: "ID người dùng không hợp lệ",
     });
   }
 
   const { fullName, phoneNumber, gender } = req.body;
   if (!fullName || !phoneNumber || !gender) {
+    // Xóa file ảnh đã up lên cloudinary
+    await deleteUploadedFile(req.file);
     return res.status(400).json({
       status: "error",
       code: 400,
@@ -991,6 +994,7 @@ const updateUser = async (req, res) => {
   try {
     const user = await User.findById(userId);
     if (!user) {
+      await deleteUploadedFile(req.file);
       return res.status(404).json({
         status: "error",
         code: 404,
@@ -1070,6 +1074,7 @@ const getUserProfile = async (req, res) => {
 const updateUserByAdmin = async (req, res) => {
   const roleName = req.user.roleName;
   if (roleName !== "ADMIN") {
+    await deleteUploadedFile(req.file);
     return res.status(403).json({
       status: "error",
       code: 403,
@@ -1078,7 +1083,8 @@ const updateUserByAdmin = async (req, res) => {
   }
 
   const userId = req.params.userId;
-  if (!userId) {
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    await deleteUploadedFile(req.file);
     return res.status(400).json({
       status: "error",
       code: 400,
@@ -1088,6 +1094,7 @@ const updateUserByAdmin = async (req, res) => {
 
   const { fullName, phoneNumber, gender } = req.body;
   if (!fullName || !phoneNumber || !gender) {
+    await deleteUploadedFile(req.file);
     return res.status(400).json({
       status: "error",
       code: 400,
@@ -1098,6 +1105,7 @@ const updateUserByAdmin = async (req, res) => {
   try {
     let user = await User.findById(userId);
     if (!user) {
+      await deleteUploadedFile(req.file);
       return res.status(404).json({
         status: "error",
         code: 404,
@@ -1144,6 +1152,13 @@ const updateUserByAdmin = async (req, res) => {
       code: 500,
       message: "Lỗi hệ thống: " + error.message,
     });
+  }
+};
+
+// Function xóa ảnh upload cloudinary
+const deleteUploadedFile = async (file) => {
+  if (file && file.filename) {
+    await cloudinary.uploader.destroy(file.filename);
   }
 };
 

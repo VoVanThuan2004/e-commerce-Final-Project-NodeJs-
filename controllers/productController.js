@@ -3,15 +3,16 @@ const Brand = require("../models/brand");
 const Category = require("../models/category");
 const ProductVariant = require("../models/productVariant");
 const VariantAttribute = require("../models/variantAttribute");
-const AttributeValue = require("../models/attributeValue");
 const Inventory = require("../models/inventory");
 const client = require("../config/elasticsearch");
 const mongoose = require("mongoose");
 const cloudinary = require("../config/cloudinary");
+const VariantImage = require("../models/variantImage");
 
 const addProduct = async (req, res) => {
   const roleName = req.user.roleName;
   if (roleName !== "ADMIN") {
+    await cloudinary.uploader.destroy(req.file.filename);
     return res.status(403).json({
       status: "error",
       code: 403,
@@ -21,6 +22,7 @@ const addProduct = async (req, res) => {
 
   const { brandId, categoryId, name, description } = req.body;
   if (!brandId || !categoryId || !name || !description) {
+    await cloudinary.uploader.destroy(req.file.filename);
     return res.status(400).json({
       status: "error",
       code: 400,
@@ -41,6 +43,7 @@ const addProduct = async (req, res) => {
     // Kiểm tra brand
     const brand = await Brand.findById(brandId);
     if (!brand) {
+      await cloudinary.uploader.destroy(req.file.filename);
       return res.status(404).json({
         status: "error",
         code: 404,
@@ -51,6 +54,7 @@ const addProduct = async (req, res) => {
     // Kiểm tra category
     const category = await Category.findById(categoryId);
     if (!category) {
+      await cloudinary.uploader.destroy(req.file.filename);
       return res.status(404).json({
         status: "error",
         code: 404,
@@ -66,6 +70,7 @@ const addProduct = async (req, res) => {
       description,
       defaultImage: req.file.path,
       defaultImagePublicId: req.file.filename,
+      status: true,
     });
 
     // Thêm product vào Elasticsearch
@@ -80,6 +85,7 @@ const addProduct = async (req, res) => {
           price: product.price,
           description: product.description,
           defaultImage: product.defaultImage,
+          status: product.status,
           defaultImagePublicId: product.defaultImagePublicId,
           suggest: {
             input: [product.name],
@@ -98,11 +104,9 @@ const addProduct = async (req, res) => {
       // Nếu elastichsearch lỗi -> xóa product trong DB
       await Product.findByIdAndDelete(product._id);
 
-      return res.status(400).json({
-        status: "error",
-        code: 400,
-        message: "Lỗi khi thêm sản phẩm: " + eserror.message,
-      });
+      console.log(
+        "Lỗi khi thêm sản phẩm lên Elastic Search: " + eserror.message
+      );
     }
   } catch (error) {
     return res.status(500).json({
@@ -116,6 +120,7 @@ const addProduct = async (req, res) => {
 const updateProduct = async (req, res) => {
   const roleName = req.user.roleName;
   if (roleName !== "ADMIN") {
+    await deleteUploadedFile(req.file);
     return res.status(403).json({
       status: "error",
       code: 403,
@@ -125,6 +130,7 @@ const updateProduct = async (req, res) => {
 
   const productId = req.params.productId;
   if (!mongoose.Types.ObjectId.isValid(productId)) {
+    await deleteUploadedFile(req.file);
     return res.status(400).json({
       status: "error",
       code: 400,
@@ -134,6 +140,7 @@ const updateProduct = async (req, res) => {
 
   const { brandId, categoryId, name, description } = req.body;
   if (!brandId || !categoryId || !name || !description) {
+    await deleteUploadedFile(req.file);
     return res.status(400).json({
       status: "error",
       code: 400,
@@ -145,6 +152,7 @@ const updateProduct = async (req, res) => {
     // Kiểm tra brand
     const brand = await Brand.findById(brandId);
     if (!brand) {
+      await deleteUploadedFile(req.file);
       return res.status(404).json({
         status: "error",
         code: 404,
@@ -155,6 +163,7 @@ const updateProduct = async (req, res) => {
     // Kiểm tra category
     const category = await Category.findById(categoryId);
     if (!category) {
+      await deleteUploadedFile(req.file);
       return res.status(404).json({
         status: "error",
         code: 404,
@@ -165,6 +174,7 @@ const updateProduct = async (req, res) => {
     // Lấy product đang tồn tại
     const product = await Product.findById(productId);
     if (!product) {
+      await deleteUploadedFile(req.file);
       return res.status(404).json({
         status: "error",
         code: 404,
@@ -204,6 +214,7 @@ const updateProduct = async (req, res) => {
           price: product.price,
           description: product.description,
           defaultImage: product.defaultImage,
+          status: product.status,
           defaultImagePublicId: product.defaultImagePublicId,
           suggest: {
             input: [product.name],
@@ -247,15 +258,30 @@ const searchProduct = async (req, res) => {
 
   try {
     // Nếu q (nhập search) thì tìm kiếm theo q, ngược lại query tất cả
-    const esQuery = q
-      ? {
-          multi_match: {
-            query: q,
-            fields: ["name"], // name có trọng số cao hơn
-            fuzziness: "AUTO", // cho phép tìm gần đúng
-          },
-        }
-      : { match_all: {} };
+    // Xây dựng query với filter status = true
+    let esQuery;
+
+    if (q) {
+      esQuery = {
+        bool: {
+          must: [
+            {
+              multi_match: {
+                query: q,
+                fields: ["name"],
+                fuzziness: "AUTO",
+              },
+            },
+          ],
+        },
+      };
+    } else {
+      esQuery = {
+        bool: {
+          must: [{ match_all: {} }],
+        },
+      };
+    }
 
     const result = await client.search({
       index: "products",
@@ -269,6 +295,7 @@ const searchProduct = async (req, res) => {
         "defaultImage",
         "brandId",
         "categoryId",
+        "status",
       ], // chỉ lấy các field này
     });
 
@@ -347,7 +374,7 @@ const suggestProduct = async (req, res) => {
 };
 
 const filterProduct = async (req, res) => {
-  const { brandId, categoryId, minPrice, maxPrice } = req.query;
+  const { q, brandId, categoryId, minPrice, maxPrice, by, sort } = req.query;
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
   const skip = (page - 1) * limit;
@@ -370,12 +397,51 @@ const filterProduct = async (req, res) => {
     });
   }
 
+  // Nếu có nhập search
+  // Search chỉ trên field name
+  if (q && q.trim()) {
+    const searchQuery = q.trim();
+
+    must.push({
+      bool: {
+        should: [
+          // Ưu tiên kết quả khớp chính xác nhất
+          {
+            match_phrase: {
+              name: {
+                query: searchQuery,
+                boost: 3,
+              },
+            },
+          },
+          // Tìm kiếm với fuzzy matching
+          {
+            match: {
+              name: {
+                query: searchQuery,
+                fuzziness: "AUTO",
+                operator: "and", // yêu cầu tất cả từ phải khớp
+                boost: 2,
+              },
+            },
+          },
+        ],
+      },
+    });
+  }
+
+  // Kết hợp với sort product trong filter
+  // Xử lý sắp xếp
+  const sortField = by === "price" ? "price" : "name.keyword"; // default: name
+  const sortOrder = sort === "desc" ? "desc" : "asc";
+
   try {
     const result = await client.search({
       index: "products",
       from: skip,
       size: limit,
       query: { bool: { must } },
+      sort: [{ [sortField]: sortOrder }],
       _source: [
         "name",
         "price",
@@ -383,6 +449,7 @@ const filterProduct = async (req, res) => {
         "defaultImage",
         "brandId",
         "categoryId",
+        "status",
       ], // chỉ lấy các field này
     });
 
@@ -454,6 +521,7 @@ const sortProduct = async (req, res) => {
         "defaultImage",
         "brandId",
         "categoryId",
+        "status",
       ], // chỉ lấy các field này
     });
 
@@ -506,13 +574,19 @@ const viewDetailProduct = async (req, res) => {
     }
 
     // 2. Lấy ra danh sách biến thể của product
-    const productVariants = await ProductVariant.find({ productId }).select(
-      "_id name sellingPrice isActive"
+    const productVariants = await ProductVariant.find({
+      productId,
+    }).select(
+      "_id name originalPrice sellingPrice isActive createdAt updatedAt weight width height length"
     );
 
     // 3. Map thêm attribute cho từng biến thể
     const variantWithAttrs = await Promise.all(
       productVariants.map(async (variant) => {
+        // Lấy ảnh của sản phẩm biến thể
+        const variantImages = await VariantImage.find({
+          productVariantId: variant._id,
+        }).select("imageUrl");
         const variantAttributes = await VariantAttribute.find({
           productVariantId: variant._id,
         }).populate({
@@ -536,6 +610,7 @@ const viewDetailProduct = async (req, res) => {
 
         return {
           ...variant.toObject(),
+          images: variantImages,
           quantity: inventory.quantity,
           attributes: formattedAttrs,
         };
@@ -587,33 +662,33 @@ const chooseProductVariant = async (req, res) => {
           from: "variantattributes",
           localField: "_id",
           foreignField: "productVariantId",
-          as: "variantAttributes"
-        }
+          as: "variantAttributes",
+        },
       },
       {
-        $unwind: "$variantAttributes"
+        $unwind: "$variantAttributes",
       },
       {
         $lookup: {
           from: "attributevalues",
           localField: "variantAttributes.attributeValueId",
           foreignField: "_id",
-          as: "attrValue"
-        }
+          as: "attrValue",
+        },
       },
       {
-        $unwind: "$attrValue"
+        $unwind: "$attrValue",
       },
       {
         $lookup: {
           from: "attributes",
           localField: "attrValue.attributeId",
           foreignField: "_id",
-          as: "attr"
-        }
+          as: "attr",
+        },
       },
       {
-        $unwind: "$attr"
+        $unwind: "$attr",
       },
 
       // Gom lại thành attributes array
@@ -630,20 +705,20 @@ const chooseProductVariant = async (req, res) => {
             $push: {
               valueId: "$attrValue._id",
               value: "$attrValue.value",
-              attribute: "$attr.attribute_name"
-            }
-          }
-        }
+              attribute: "$attr.attribute_name",
+            },
+          },
+        },
       },
 
       // Filter: phải đủ số lượng attrIds và chứa đúng tất cả attrIds client gửi
       {
         $match: {
-          $expr: { $eq: [ { $size: "$attributes" }, attrIds.length ] },
+          $expr: { $eq: [{ $size: "$attributes" }, attrIds.length] },
           "attributes.valueId": {
-            $all: attrIds.map(id => new mongoose.Types.ObjectId(id))
-          }
-        }
+            $all: attrIds.map((id) => new mongoose.Types.ObjectId(id)),
+          },
+        },
       },
 
       // Join images
@@ -652,8 +727,8 @@ const chooseProductVariant = async (req, res) => {
           from: "variantimages",
           localField: "_id",
           foreignField: "productVariantId",
-          as: "images"
-        }
+          as: "images",
+        },
       },
       {
         $project: {
@@ -663,8 +738,8 @@ const chooseProductVariant = async (req, res) => {
           isActive: 1,
           productId: 1,
           attributes: 1,
-          images: { imageUrl: 1 } // chỉ lấy imageUrl
-        }
+          images: { imageUrl: 1 }, // chỉ lấy imageUrl
+        },
       },
 
       // Join inventory và chỉ lấy quantity
@@ -673,24 +748,26 @@ const chooseProductVariant = async (req, res) => {
           from: "inventories",
           localField: "_id",
           foreignField: "productVariantId",
-          as: "inventory"
-        }
+          as: "inventory",
+        },
       },
       {
         $addFields: {
-          quantity: { $ifNull: [ { $arrayElemAt: ["$inventory.quantity", 0] }, 0 ] }
-        }
+          quantity: {
+            $ifNull: [{ $arrayElemAt: ["$inventory.quantity", 0] }, 0],
+          },
+        },
       },
       {
-        $project: { inventory: 0 } // bỏ luôn inventory array
-      }
+        $project: { inventory: 0 }, // bỏ luôn inventory array
+      },
     ]);
 
     if (variants.length === 0) {
       return res.status(404).json({
         status: "error",
         code: 404,
-        message: "Không tìm thấy biến thể với các thuộc tính đã chọn"
+        message: "Không tìm thấy biến thể với các thuộc tính đã chọn",
       });
     }
 
@@ -698,7 +775,7 @@ const chooseProductVariant = async (req, res) => {
       status: "success",
       code: 200,
       message: "Lấy biến thể sản phẩm thành công",
-      data: variants[0]
+      data: variants[0],
     });
   } catch (error) {
     return res.status(500).json({
@@ -706,6 +783,154 @@ const chooseProductVariant = async (req, res) => {
       code: 500,
       message: "Lỗi hệ thống: " + error.message,
     });
+  }
+};
+
+// Cập nhật trạng thái product
+const updateStatusProduct = async (req, res) => {
+  const roleName = req.user.roleName;
+  if (roleName !== "ADMIN") {
+    return res.status(403).json({
+      status: "error",
+      code: 403,
+      message: "Không có quyền truy cập tài nguyên",
+    });
+  }
+
+  const productId = req.params.productId;
+  if (!mongoose.Types.ObjectId.isValid(productId)) {
+    return res.status(400).json({
+      status: "error",
+      code: 400,
+      message: "ID sản phẩm không hợp lệ",
+    });
+  }
+
+  try {
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(400).json({
+        status: "error",
+        code: 400,
+        message: "Sản phẩm không tồn tại",
+      });
+    }
+
+    // Lấy trạng thái hiện tại
+    const currentStatus = product.status;
+    product.status = !currentStatus;
+    await product.save();
+
+    // Cập nhật lại trạng thái product trên ElasticSearch
+    try {
+      await client.update({
+        index: "products",
+        id: product._id.toString(),
+        doc: {
+          status: product.status,
+        },
+      });
+    } catch (error) {
+      await Product.findByIdAndUpdate(product._id, {
+        $set: { status: currentStatus },
+      });
+      return res.status(500).json({
+        status: "error",
+        code: 500,
+        message:
+          "Lỗi khi cập nhật trạng thái sản phẩm trên Elastic Search: " +
+          error.message,
+      });
+    }
+
+    return res.status(200).json({
+      status: "success",
+      code: 200,
+      message: currentStatus ? "Đã tắt sản phẩm" : "Đã bật sản phẩm",
+      data: product,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: "error",
+      code: 500,
+      message: "Lỗi hệ thống: " + error.message,
+    });
+  }
+};
+
+const deleteProduct = async (req, res) => {
+  const productId = req.params.productId;
+  if (!mongoose.Types.ObjectId.isValid(productId)) {
+    return res.status(400).json({
+      status: "error",
+      code: 400,
+      message: "ID sản phẩm không hợp lệ",
+    });
+  }
+  try {
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({
+        status: "error",
+        code: 404,
+        message: "Sản phẩm không tồn tại",
+      });
+    }
+
+    // Kiểm tra xem product hiện tại có biến thể tham chiếu không -> nếu có -> không cho xóa
+    const productVariant = await ProductVariant.findOne({ productId });
+    if (productVariant) {
+      return res.status(400).json({
+        status: "error",
+        code: 400,
+        message:
+          "Không thể xóa sản phẩm, vì hiện tại sản phẩm có các biến thể sản phẩm đang tồn tại",
+      });
+    }
+
+    // Xóa ảnh trên Cloudinary (nếu có)
+    if (product.defaultImagePublicId) {
+      try {
+        await cloudinary.uploader.destroy(product.defaultImagePublicId);
+      } catch (err) {
+        console.warn("Không thể xóa ảnh trên Cloudinary:", err.message);
+      }
+    }
+
+    // Xóa trên Elasticsearch
+    try {
+      await client.delete({
+        index: "products",
+        id: productId.toString(),
+      });
+    } catch (esError) {
+      console.warn(
+        "Không thể xóa sản phẩm trên Elasticsearch:",
+        esError.message
+      );
+    }
+
+    // Xóa trong MongoDB
+    await Product.findByIdAndDelete(productId);
+
+    return res.status(200).json({
+      status: "success",
+      code: 200,
+      message: "Xóa sản phẩm thành công",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: "error",
+      code: 500,
+      message: "Lỗi hệ thống: " + error.message,
+    });
+  }
+};
+
+// Function xóa ảnh upload cloudinary
+const deleteUploadedFile = async (file) => {
+  if (file && file.filename) {
+    await cloudinary.uploader.destroy(file.filename);
   }
 };
 
@@ -718,4 +943,6 @@ module.exports = {
   sortProduct,
   viewDetailProduct,
   chooseProductVariant,
+  updateStatusProduct,
+  deleteProduct,
 };

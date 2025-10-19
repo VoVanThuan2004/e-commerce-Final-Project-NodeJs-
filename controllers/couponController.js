@@ -1,6 +1,6 @@
 const Coupon = require("../models/coupon");
 const mongoose = require("mongoose");
-
+//controller/couponController.js
 const addCoupon = async (req, res) => {
   const roleName = req.user.roleName;
   if (roleName !== "ADMIN") {
@@ -135,19 +135,64 @@ const deleteCoupon = async (req, res) => {
     return res.status(200).json({
       status: "success",
       code: 200,
-      message: "Xóa mã giảm giá thành công"
+      message: "Xóa mã giảm giá thành công",
     });
   } catch (error) {
-     return res.status(500).json({
+    return res.status(500).json({
       status: "error",
       code: 500,
       message: "Lỗi hệ thống: " + error.message,
     });
   }
-}
+};
+
+const getAllCoupons = async (req, res) => {
+  const roleName = req.user.roleName;
+  if (roleName !== "ADMIN") {
+    return res.status(403).json({
+      status: "error",
+      code: 403,
+      message: "Không có quyền truy cập tài nguyên này",
+    });
+  }
+
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 15;
+  const skip = (page - 1) * limit;
+
+  try {
+    const [coupons, totalCoupons] = await Promise.all([
+      Coupon.find().skip(skip).limit(limit),
+      Coupon.countDocuments(),
+    ]);
+
+    const totalPages = Math.ceil(totalCoupons / limit);
+
+    return res.status(200).json({
+      status: "success",
+      code: 200,
+      message: "Lấy danh sách mã giảm giá thành công",
+      data: coupons,
+      pagination: {
+        page,
+        limit,
+        totalPages,
+        totalCoupons,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: "error",
+      code: 500,
+      message: "Lỗi hệ thống: " + error.message,
+    });
+  }
+};
 
 module.exports = {
   addCoupon,
   updateCoupon,
-  deleteCoupon
+  deleteCoupon,
+  getAllCoupons,
 };
+   

@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const AttributeValue = require("../models/attributeValue");
 const Attribute = require("../models/attribute");
+const VariantAttribute = require("../models/variantAttribute");
 
 const addAttributeValue = async (req, res) => {
   const roleName = req.user.roleName;
@@ -145,6 +146,16 @@ const deleteAttributeValue = async (req, res) => {
         status: "error",
         code: 404,
         message: "Giá trị thuộc tính không tồn tại",
+      });
+    }
+
+    // Kiểm tra nếu giá trị thuộc tính đã có sản phẩm tham chiếu -> không xóa
+    const variantAttribute = await VariantAttribute.findOne({ attributeValueId });
+    if (variantAttribute) {
+      return res.status(400).json({
+        status: "error",
+        code: 400,
+        message: "Giá trị thuộc tính không thể xóa, vì đã có sản phẩm biến thể đang có giá trị thuộc tính này",
       });
     }
 

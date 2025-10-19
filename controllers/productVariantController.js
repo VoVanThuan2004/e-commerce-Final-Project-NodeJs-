@@ -415,7 +415,7 @@ const deleteProductVariant = async (req, res) => {
     });
   }
 
-  const { productVariantId } = req.params; // ✅ destructuring
+  const { productVariantId } = req.params; // destructuring
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -631,7 +631,6 @@ const updateStatusProductVariant = async (req, res) => {
   }
 };
 
-
 const deleteUploadedFile = async (files) => {
   if (files.length > 0) {
     await Promise.all(
@@ -641,7 +640,6 @@ const deleteUploadedFile = async (files) => {
     );
   }
 };
-
 
 module.exports = {
   addProductVariant,

@@ -22,6 +22,12 @@ router.put(
   productController.updateProduct
 );
 
+// API xóa product
+router.delete("/api/v1/products/:productId", auth, productController.deleteProduct);
+
+// API tắt - bật sản phẩm
+router.put("/api/v1/products/:productId/status", auth, productController.updateStatusProduct);
+
 // API tìm kiếm
 router.get("/api/v1/products/search/", productController.searchProduct);
 

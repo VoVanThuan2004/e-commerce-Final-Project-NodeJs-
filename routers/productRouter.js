@@ -46,4 +46,7 @@ router.get("/api/v1/products/:productId/detail", productController.viewDetailPro
 // API chọn sản phẩm biến thể
 router.get("/api/v1/products/:productId/variants", productController.chooseProductVariant);
 
+// API lấy ra 10 sản phẩm homepage
+router.get("/api/v1/products/homepage", productController.getProductHomePage);
+
 module.exports = router;

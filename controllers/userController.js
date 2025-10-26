@@ -46,6 +46,15 @@ const login = async (req, res) => {
       });
     }
 
+    // Kiểm tra tài khoản có bị khóa không
+    if (!user.isActive) {
+      return res.status(400).json({
+        status: "error",
+        code: 400,
+        message: "Tài khoản đã bị khóa",
+      });
+    }
+
     const role = await Role.findById(user.roleId);
     const SECRET_KEY = process.env.SECRET_KEY;
 
@@ -157,6 +166,15 @@ const loginSocialAccount = async (req, res) => {
         password: "",
         avatar: avatar,
         isActive: true,
+      });
+    }
+
+    // Kiểm tra nếu tài khoản đã bị khóa
+    if (!user.isActive) {
+      return res.status(400).json({
+        status: "error",
+        code: 400,
+        message: "Tài khoản đã bị khóa",
       });
     }
 
@@ -853,7 +871,7 @@ const getAllUsers = async (req, res) => {
       User.countDocuments({ roleId: { $ne: role._id } }),
       User.find({ roleId: { $ne: role._id } })
         .select(
-          "_id email fullName avatar phoneNumber gender loyaltyPoints isActive createdAt updatedAt"
+          "_id email fullName avatar phoneNumber gender loyaltyPoints isActive"
         )
         .skip(skip)
         .limit(limit)
@@ -946,6 +964,15 @@ const changePassword = async (req, res) => {
         status: "error",
         code: 400,
         message: "Mật khẩu xác nhận không khớp",
+      });
+    }
+
+    // Kiểm tra độ dài password mới
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        status: "error",
+        code: 400,
+        message: "Mật khẩu phải có ít nhất 8 ký tự",
       });
     }
 

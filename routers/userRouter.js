@@ -33,6 +33,9 @@ router.put('/api/v1/auth/change-password', auth, userController.changePassword);
 // RefreshToken
 router.post('/api/v1/auth/refreshToken', userController.refreshToken);
 
+// Set password cho tài khoản mới (guest)
+router.post('/api/v1/auth/set-password', userController.setPassword);
+
 
 // Lấy danh sách người dùng
 router.get('/api/v1/users', auth, userController.getAllUsers);

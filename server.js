@@ -23,6 +23,10 @@ const PORT = process.env.PORT;
 const session = require("express-session");
 const cartRouter = require("./routers/cartRouter");
 const cleanupCartItem = require("./cron/cleanupCartItem");
+const orderRouter = require("./routers/orderRouter");
+const paymentRouter = require("./routers/paymentRouter");
+const dashboardRouter = require("./routers/dashboardRouter");
+const authRouter = require("./routers/authRouter");
 
 app.use(cors());
 app.use(express.json());
@@ -70,8 +74,11 @@ app.use(couponRouter);
 app.use(wishListRouter);
 app.use(addressRouter);
 app.use(cartRouter);
+app.use(orderRouter);
+app.use(paymentRouter);
+app.use(dashboardRouter);
+app.use(authRouter);
 
-// Kết nối Server
 server.listen(PORT, () => {
   console.log(`http://localhost:${PORT}`);
   cleanupCartItem();

@@ -76,8 +76,8 @@ app.use(addressRouter);
 app.use(cartRouter);
 app.use(orderRouter);
 app.use(paymentRouter);
-app.use(dashboardRouter);
 app.use(authRouter);
+app.use(dashboardRouter);
 
 server.listen(PORT, () => {
   console.log(`http://localhost:${PORT}`);

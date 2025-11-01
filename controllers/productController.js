@@ -927,6 +927,45 @@ const deleteProduct = async (req, res) => {
   }
 };
 
+
+const getProductHomePage = async (req, res) => {
+  try {
+    const result = await client.search({
+      index: "products",
+      from: 0,
+      size: 8,
+      _source: [
+        "name",
+        "price",
+        "description",
+        "defaultImage",
+        "brandId",
+        "categoryId",
+        "status",
+      ],
+    });
+
+    const hits = result.hits.hits.map((hit) => ({
+      id: hit._id,
+      ...hit._source,
+    }));
+
+    return res.status(200).json({
+      status: "success",
+      code: 200,
+      message: "Lấy các sản phẩm cho trang chủ",
+      data: hits
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: "error",
+      code: 500,
+      message: "Lỗi hệ thống: " + error.message,
+    });
+  }
+}
+
+
 // Function xóa ảnh upload cloudinary
 const deleteUploadedFile = async (file) => {
   if (file && file.filename) {
@@ -945,4 +984,5 @@ module.exports = {
   chooseProductVariant,
   updateStatusProduct,
   deleteProduct,
+  getProductHomePage
 };

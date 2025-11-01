@@ -260,19 +260,8 @@ const deleteUploadedFile = async (file) => {
 };
 
 module.exports = {
-  login,
-  loginSocialAccount,
-  logout,
-  register,
-  verifyOTPCreateAccount,
-  activeAccount,
-  recoveryPassword,
-  verifyOTPRecoveryPassword,
   getAllUsers,
-  changePassword,
   updateUser,
   getUserProfile,
   updateUserByAdmin,
-  refreshToken,
-  setPassword,
 };

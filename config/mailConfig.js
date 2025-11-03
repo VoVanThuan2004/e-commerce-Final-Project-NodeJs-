@@ -37,6 +37,59 @@ const sendCreateAccount = async (to, otp) => {
   await transporter.sendMail(mailOptions);
 };
 
+
+// Gửi email chứa mật khẩu đăng ký tài khoản mới
+const sendAccountPassword = async (to, password) => {
+  const mailOptions = {
+    from: `"Hệ thống hỗ trợ" <${process.env.EMAIL}>`,
+    to,
+    subject: "Thông tin tài khoản của bạn",
+    html: `
+      <div style="
+        font-family: 'Segoe UI', Arial, sans-serif;
+        font-size: 15px;
+        color: #333;
+        background-color: #f9fff9;
+        border: 1px solid #e0f2e0;
+        border-radius: 8px;
+        padding: 24px;
+        max-width: 600px;
+        margin: 0 auto;
+      ">
+        <h2 style="color: #4CAF50; text-align: center;">🎉 Chào mừng bạn đến với hệ thống!</h2>
+
+        <p>Xin chào,</p>
+        <p>Bạn vừa đăng ký tài khoản thành công. Dưới đây là thông tin đăng nhập của bạn:</p>
+
+        <div style="
+          background-color: #e8f5e9;
+          padding: 16px;
+          border-radius: 6px;
+          margin: 16px 0;
+          border-left: 4px solid #4CAF50;
+        ">
+          <p style="margin: 0;"><strong>Email:</strong> ${to}</p>
+          <p style="margin: 0;"><strong>Mật khẩu tạm thời:</strong> <span style="color: #2e7d32;">${password}</span></p>
+        </div>
+
+        <p>🔒 <strong>Lưu ý bảo mật:</strong> Vui lòng đăng nhập và <strong>đổi mật khẩu ngay</strong> để đảm bảo an toàn cho tài khoản của bạn.</p>
+
+        <p>Nếu bạn không yêu cầu đăng ký tài khoản này, vui lòng bỏ qua email này.</p>
+
+        <br/>
+        <hr style="border: none; border-top: 1px solid #c8e6c9;"/>
+        <p style="font-size: 13px; color: #666; text-align: center;">
+          Trân trọng,<br/>
+          <strong>Đội ngũ hỗ trợ hệ thống</strong>
+        </p>
+      </div>
+    `,
+  };
+
+  await transporter.sendMail(mailOptions);
+};
+
+
 const sendRecoveryPassword = async (to, otp) => {
   const mailOptions = {
     from: `"Hệ thống hỗ trợ" <${process.env.EMAIL}>`,
@@ -216,4 +269,5 @@ module.exports = {
   sendRecoveryPassword,
   sendPasswordCreateAccount,
   sendOrderConfirmationEmail,
+  sendAccountPassword,
 };

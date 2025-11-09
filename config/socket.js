@@ -5,7 +5,7 @@ const initSocket = (server) => {
   io = new Server(server, {
     cors: {
       origin: "*",
-      methods: ["GET", "POST", "PUT"],
+      methods: ["GET", "POST", "PUT", "DELETE"],
     },
   });
 
@@ -16,14 +16,28 @@ const initSocket = (server) => {
       console.log("Client disconnected: ", socket.id);
     });
 
-    socket.on("newReview", (data) => {
-      io.emit("newReview", data);
+    // 🧩 Khi client vào một board cụ thể
+    socket.on("joinProduct", (productId) => {
+      socket.join(productId); // Tham gia vào "phòng" theo boardId
+      console.log(`User ${socket.id} joined product ${productId}`);
     });
 
-    socket.on("newRating", (data) => {
-      io.emit("newRating", data);
+    // 🧩 Khi client rời board
+    socket.on("leaveProduct", (productId) => {
+      socket.leave(productId);
+      console.log(`User ${socket.id} left product ${productId}`);
     });
+
+    // socket.on("newReview", (data) => {
+    //   io.emit("newReview", data);
+    // });
+
+    // socket.on("newRating", (data) => {
+    //   io.emit("newRating", data);
+    // });
   });
+
+  console.log("🚀 Socket.io initialized!");
 };
 
 const getIO = () => {

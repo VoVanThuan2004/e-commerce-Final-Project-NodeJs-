@@ -445,11 +445,11 @@ const filterProduct = async (req, res) => {
       _source: [
         "name",
         "price",
-        "description",
         "defaultImage",
         "brandId",
         "categoryId",
         "status",
+        "averageStars",
       ], // chỉ lấy các field này
     });
 
@@ -927,21 +927,20 @@ const deleteProduct = async (req, res) => {
   }
 };
 
-
 const getProductHomePage = async (req, res) => {
   try {
     const result = await client.search({
       index: "products",
       from: 0,
-      size: 8,
+      size: 10,
       _source: [
         "name",
         "price",
-        "description",
         "defaultImage",
         "brandId",
         "categoryId",
         "status",
+        "averageStars",
       ],
     });
 
@@ -954,7 +953,7 @@ const getProductHomePage = async (req, res) => {
       status: "success",
       code: 200,
       message: "Lấy các sản phẩm cho trang chủ",
-      data: hits
+      data: hits,
     });
   } catch (error) {
     return res.status(500).json({
@@ -963,8 +962,50 @@ const getProductHomePage = async (req, res) => {
       message: "Lỗi hệ thống: " + error.message,
     });
   }
-}
+};
 
+const getProductSameCategory = async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const result = await client.search({
+      index: "products",
+      from: 0,
+      size: 10,
+      query: {
+        term: {
+          categoryId: categoryId,
+        },
+      },
+      _source: [
+        "name",
+        "price",
+        "defaultImage",
+        "brandId",
+        "categoryId",
+        "status",
+        "averageStars",
+      ],
+    });
+
+    const hits = result.hits.hits.map((hit) => ({
+      id: hit._id,
+      ...hit._source,
+    }));
+
+    return res.status(200).json({
+      status: "success",
+      code: 200,
+      message: "Lấy các sản phẩm cho trang chủ",
+      data: hits,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: "error",
+      code: 500,
+      message: "Lỗi hệ thống: " + error.message,
+    });
+  }
+};
 
 // Function xóa ảnh upload cloudinary
 const deleteUploadedFile = async (file) => {
@@ -984,5 +1025,6 @@ module.exports = {
   chooseProductVariant,
   updateStatusProduct,
   deleteProduct,
-  getProductHomePage
+  getProductHomePage,
+  getProductSameCategory,
 };

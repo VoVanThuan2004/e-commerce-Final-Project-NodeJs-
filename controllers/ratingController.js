@@ -3,6 +3,7 @@ const Product = require("../models/product");
 const User = require("../models/user");
 const { getIO } = require("../config/socket");
 const mongoose = require("mongoose");
+const client = require("../config/elasticsearch");
 
 const postRatingProduct = async (req, res) => {
   const userId = req.user.userId;
@@ -24,9 +25,16 @@ const postRatingProduct = async (req, res) => {
     });
   }
 
+  const session = await mongoose.startSession();
+
   try {
-    // Ktra user
-    const user = await User.findById(userId);
+    await session.startTransaction();
+    
+    // Kiểm tra user & product
+    const [user, product] = await Promise.all([
+      User.findById(userId).session(session),
+      Product.findById(productId).session(session),
+    ]);
     if (!user) {
       return res.status(404).json({
         status: "error",
@@ -34,34 +42,58 @@ const postRatingProduct = async (req, res) => {
         message: "Người dùng không tồn tại",
       });
     }
-
-    // Ktra product
-    const product = await Product.findById(productId);
     if (!product) {
       return res.status(404).json({
         status: "error",
         code: 404,
         message: "Sản phẩm không tồn tại",
       });
-    }    
+    }
 
     // Tạo rating
-    const rating = await Rating.create({
-      productId,
-      userId,
-      stars,
+    const rating = await Rating.create([{ productId, userId, stars }], {
+      session,
+    });
+    const newRating = rating[0];
+
+    // Tính tổng lại trung bình rating của sản phẩm
+    const stats = await Rating.aggregate([
+      {
+        $match: { productId: new mongoose.Types.ObjectId(productId) },
+      },
+      {
+        $group: {
+          _id: "$productId",
+          averageStars: { $avg: "$stars" },
+        },
+      },
+    ]).session(session);
+
+    const { averageStars } = stats[0] || { averageStars: 0 };
+
+    await session.commitTransaction();
+    session.endSession();
+
+    // Cập nhật lên Elastic search
+    await client.update({
+      index: "products",
+      id: product._id.toString(),
+      doc: {
+        averageStars,
+      },
     });
 
     // Gửi qua socket
     const io = getIO();
     io.emit("newRating", {
-      _id: rating._id,
-      productId: rating.productId,
+      _id: newRating._id,
+      productId: newRating.productId,
       userId,
       fullName: user.fullName,
-      stars: rating.stars,
-      createdAt: rating.createdAt,
-      updatedAt: rating.updatedAt,
+      avatar: user.avatar,
+      stars: newRating.stars,
+      createdAt: newRating.createdAt,
+      updatedAt: newRating.updatedAt,
     });
 
     return res.status(201).json({
@@ -69,16 +101,22 @@ const postRatingProduct = async (req, res) => {
       code: 201,
       message: "Đánh giá sao cho sản phẩm thành công",
       data: {
-        _id: rating._id,
-        productId: rating.productId,
+        _id: newRating._id,
+        productId: newRating.productId,
         userId,
         fullName: user.fullName,
-        stars: rating.stars,
-        createdAt: rating.createdAt,
-        updatedAt: rating.updatedAt,
+        avatar: user.avatar,
+        stars: newRating.stars,
+        createdAt: newRating.createdAt,
+        updatedAt: newRating.updatedAt,
       },
     });
   } catch (error) {
+    // Kiểm tra xem transaction có đang active không trước khi abort
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    session.endSession();
     return res.status(500).json({
       status: "error",
       code: 500,
@@ -118,6 +156,7 @@ const getAllRatingsByProduct = async (req, res) => {
 
       {
         $addFields: {
+          avatar: { $arrayElemAt: ["$userInfo.avatar", 0] },
           fullName: { $arrayElemAt: ["$userInfo.fullName", 0] },
         },
       },

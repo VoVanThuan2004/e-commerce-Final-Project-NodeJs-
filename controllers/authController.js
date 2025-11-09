@@ -11,7 +11,7 @@ const client = new OAuth2Client(process.env.CLIENT_ID);
 const {
   sendCreateAccount,
   sendRecoveryPassword,
-  sendAccountPassword
+  sendAccountPassword,
 } = require("../config/mailConfig");
 const mongoose = require("mongoose");
 const crypto = require("crypto");
@@ -383,7 +383,8 @@ const registerAccount = async (req, res) => {
         roleId: role._id,
         email,
         fullName,
-        hashedPassword,
+        password: hashedPassword,
+        isActive: true,
       });
 
       await Address.create({
@@ -424,6 +425,12 @@ const registerAccount = async (req, res) => {
         await sendAccountPassword(email, password);
       }
     }
+
+    return res.status(201).json({
+      status: "success",
+      code: 201,
+      message: "Đăng ký tài khoản thành công",
+    });
   } catch (error) {
     return res.status(500).json({
       status: "error",
@@ -772,7 +779,6 @@ const verifyOTPRecoveryPassword = async (req, res) => {
   }
 };
 
-
 // API lấy accessToken mới từ refreshToken cũ
 const refreshToken = async (req, res) => {
   const { refreshToken } = req.body;
@@ -1045,18 +1051,17 @@ const changePassword = async (req, res) => {
   }
 };
 
-
 module.exports = {
-    login,
-    logout,
-    loginSocialAccount,
-    register,
-    registerAccount,
-    verifyOTPCreateAccount,
-    verifyOTPRecoveryPassword,
-    activeAccount,
-    recoveryPassword,
-    changePassword,
-    setPassword,
-    refreshToken
-}
+  login,
+  logout,
+  loginSocialAccount,
+  register,
+  registerAccount,
+  verifyOTPCreateAccount,
+  verifyOTPRecoveryPassword,
+  activeAccount,
+  recoveryPassword,
+  changePassword,
+  setPassword,
+  refreshToken,
+};

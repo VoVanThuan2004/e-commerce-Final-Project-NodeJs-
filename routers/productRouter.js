@@ -49,4 +49,8 @@ router.get("/api/v1/products/:productId/variants", productController.chooseProdu
 // API lấy ra 10 sản phẩm homepage
 router.get("/api/v1/products/homepage", productController.getProductHomePage);
 
+// API lấy ra 10 sản phẩm tương tự thuộc cùng 1 danh mục
+router.get("/api/v1/products/category/:categoryId", productController.getProductSameCategory);
+
+
 module.exports = router;

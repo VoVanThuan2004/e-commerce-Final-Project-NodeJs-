@@ -12,6 +12,7 @@ const mongoose = require("mongoose");
 const addProductVariant = async (req, res) => {
   const roleName = req.user.roleName;
   if (roleName !== "ADMIN") {
+    await deleteUploadedFile(req.files);
     return res.status(403).json({
       status: "error",
       code: 403,
@@ -30,17 +31,23 @@ const addProductVariant = async (req, res) => {
     height,
     length,
   } = req.body;
+
+  // Ép kiểu trước khi kiểm tra
+  const sPrice = Number(sellingPrice);
+  const oPrice = Number(originalPrice);
+
   if (
     !productId ||
     !attributeValueIds ||
-    !sellingPrice ||
-    !originalPrice ||
+    !sPrice ||
+    !oPrice ||
     !quantity ||
     !weight ||
     !width ||
     !height ||
     !length
   ) {
+    await deleteUploadedFile(req.files);
     return res.status(400).json({
       status: "error",
       code: 400,
@@ -49,7 +56,9 @@ const addProductVariant = async (req, res) => {
     });
   }
 
-  if (originalPrice > sellingPrice) {
+  // Kiểm tra điều kiện sau khi đã ép kiểu
+  if (oPrice > sPrice) {
+    await deleteUploadedFile(req.files);
     return res.status(400).json({
       status: "error",
       code: 400,
@@ -74,6 +83,7 @@ const addProductVariant = async (req, res) => {
     // Tìm product
     const product = await Product.findById(productId).session(session);
     if (!product) {
+      await deleteUploadedFile(req.files);
       await session.abortTransaction();
       return res.status(404).json({
         status: "error",
@@ -221,11 +231,15 @@ const updateProductVariant = async (req, res) => {
     height,
     length,
   } = req.body;
+
+  // Ép kiểu trước khi kiểm tra
+  const sPrice = Number(sellingPrice);
+  const oPrice = Number(originalPrice);
   if (
     !productId ||
     !attributeValueIds ||
-    !sellingPrice ||
-    !originalPrice ||
+    !sPrice ||
+    !oPrice ||
     !weight ||
     !width ||
     !height ||
@@ -240,7 +254,7 @@ const updateProductVariant = async (req, res) => {
     });
   }
 
-  if (originalPrice > sellingPrice) {
+  if (oPrice > sPrice) {
     await deleteUploadedFile(req.files);
     return res.status(400).json({
       status: "error",

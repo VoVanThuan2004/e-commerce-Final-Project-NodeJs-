@@ -68,7 +68,7 @@ const login = async (req, res) => {
       },
       SECRET_KEY,
       {
-        expiresIn: "24h",
+        expiresIn: "30d",
       }
     );
 
@@ -81,7 +81,7 @@ const login = async (req, res) => {
       },
       SECRET_KEY,
       {
-        expiresIn: "30d",
+        expiresIn: "60d",
       }
     );
 
@@ -333,9 +333,11 @@ const register = async (req, res) => {
   }
 };
 
-// API đăng ký tài khoản - version 2
+// API đăng ký tài khoản - version 2 (TỰ ĐỘNG LOGIN SAU ĐĂNG KÝ)
 const registerAccount = async (req, res) => {
   const { email, fullName, address } = req.body;
+
+  // === 1. VALIDATE ===
   if (!email || !fullName || !address) {
     return res.status(400).json({
       status: "error",
@@ -344,42 +346,50 @@ const registerAccount = async (req, res) => {
     });
   }
 
-  // Kiểm tra các trường thông tin địa chỉ
-  if (
-    !address.ward ||
-    !address.wardCode ||
-    !address.district ||
-    !address.districtCode ||
-    !address.province ||
-    !address.provinceCode ||
-    !address.addressDetail
-  ) {
-    return res.status(400).json({
-      status: "error",
-      code: 400,
-      message: "Vui lòng nhập đầy đủ thông tin địa chỉ giao hàng",
-    });
+  const required = [
+    "ward",
+    "wardCode",
+    "district",
+    "districtCode",
+    "province",
+    "provinceCode",
+    "addressDetail",
+  ];
+  for (const field of required) {
+    if (!address[field]) {
+      return res.status(400).json({
+        status: "error",
+        code: 400,
+        message: `Vui lòng nhập đầy đủ ${field} trong địa chỉ`,
+      });
+    }
   }
 
   try {
-    // 1. Xác thực email
-    const user = await User.findOne({ email });
-    const role = await Role.findOne({ roleName: "USER" });
+    // === 2. TÌM USER & ROLE ===
+    const [existingUser, role] = await Promise.all([
+      User.findOne({ email }),
+      Role.findOne({ roleName: "USER" }),
+    ]);
+
     if (!role) {
       return res.status(404).json({
         status: "error",
         code: 404,
-        message: "Vai trò dành cho người dùng không tồn tại",
+        message: "Vai trò USER không tồn tại",
       });
     }
 
-    // 2. Tạo password ngẫu nhiên 8 chữ cái trở lên
+    // === 3. TẠO MẬT KHẨU NGẪU NHIÊN ===
     const password = generateRandomPassword(10);
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // TH1: Tài khoản mới
-    if (!user) {
-      const newUser = await User.create({
+    let user;
+
+    // === 4. XỬ LÝ 2 TRƯỜNG HỢP ===
+    if (!existingUser) {
+      // TH1: TÀI KHOẢN MỚI
+      user = await User.create({
         roleId: role._id,
         email,
         fullName,
@@ -388,48 +398,73 @@ const registerAccount = async (req, res) => {
       });
 
       await Address.create({
-        userId: newUser._id,
-        wardCode: address.wardCode,
-        ward: address.ward,
-        districtCode: address.districtCode,
-        district: address.district,
-        provinceCode: address.provinceCode,
-        province: address.province,
-        addressDetail: address.addressDetail,
+        userId: user._id,
+        ...address,
         isDefault: true,
       });
 
-      // Gửi email đăng ký tài khoản thành công
       await sendAccountPassword(email, password);
-    }
-    // TH2: user đã có tài khoản -> có phải là có tài khoản social account
-    else {
-      if (user.password === "") {
-        user.fullName = fullName;
-        user.password = hashedPassword;
-        await user.save();
-
-        // Thêm địa chỉ
-        await Address.create({
-          userId: user._id,
-          wardCode: address.wardCode,
-          ward: address.ward,
-          districtCode: address.districtCode,
-          district: address.district,
-          provinceCode: address.provinceCode,
-          province: address.province,
-          addressDetail: address.addressDetail,
+    } else {
+      // TH2: SOCIAL ACCOUNT → HOÀN THIỆN
+      if (existingUser.password !== "") {
+        return res.status(409).json({
+          status: "error",
+          code: 409,
+          message: "Email đã được sử dụng",
         });
-
-        // Gửi email đăng ký tài khoản thành công
-        await sendAccountPassword(email, password);
       }
+
+      existingUser.fullName = fullName;
+      existingUser.password = hashedPassword;
+      await existingUser.save();
+
+      await Address.create({
+        userId: existingUser._id,
+        ...address,
+        isDefault: true,
+      });
+
+      await sendAccountPassword(email, password);
+
+      user = existingUser;
     }
 
+    // === 5. TẠO ACCESS & REFRESH TOKEN ===
+    const accessToken = jwt.sign(
+      {
+        userId: user._id,
+        fullName: user.fullName,
+        roleName: role.roleName,
+      },
+      process.env.SECRET_KEY,
+      { expiresIn: "30d" }
+    );
+
+    const refreshToken = jwt.sign(
+      {
+        userId: user._id,
+        fullName: user.fullName,
+        roleName: role.roleName,
+      },
+      process.env.SECRET_KEY,
+      { expiresIn: "60d" }
+    );
+
+    // === 6. TRẢ VỀ TOKEN + USER INFO ===
     return res.status(201).json({
       status: "success",
       code: 201,
-      message: "Đăng ký tài khoản thành công",
+      message: "Đăng ký thành công! Đã tự động đăng nhập.",
+      data: {
+        accessToken,
+        refreshToken,
+        user: {
+          userId: user._id,
+          email: user.email,
+          fullName: user.fullName,
+          roleName: role.roleName,
+        },
+      },
     });
   } catch (error) {
     return res.status(500).json({

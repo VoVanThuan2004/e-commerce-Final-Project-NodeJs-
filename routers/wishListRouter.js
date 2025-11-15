@@ -12,4 +12,7 @@ router.delete("/api/v1/wishlist/:productId", auth, wishListController.deleteProd
 // API lấy ra danh sách sản phẩm trong wish list
 router.get("/api/v1/wishlist/", auth, wishListController.getAllProductsInWishList);
 
+// API check sản phẩm có trong wishlist chưa
+router.get("/api/v1/check-wishlist/:productId", auth, wishListController.checkWishList); 
+
 module.exports = router;

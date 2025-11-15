@@ -121,11 +121,19 @@ const getAllProductsInWishList = async (req, res) => {
     });
   }
 
+  let { page, limit } = req.query;
+  page = parseInt(page) || 1;
+  limit = parseInt(limit) || 10;
+
+  const skip = (page - 1) * limit;
+
   try {
     const products = await WishList.aggregate([
       {
         $match: { userId: new mongoose.Types.ObjectId(userId) },
       },
+
+      // JOIN Product
       {
         $lookup: {
           from: "products",
@@ -137,33 +145,73 @@ const getAllProductsInWishList = async (req, res) => {
                 _id: 1,
                 name: 1,
                 price: 1,
-                description: 1,
                 defaultImage: 1,
               },
             },
           ],
-          as: "product"
+          as: "product",
         },
       },
 
+      // JOIN Rating
       {
-        $sort: {
-          createdAt: -1
-        }
+        $lookup: {
+          from: "ratings",
+          let: { pid: "$productId" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$productId", "$$pid"] } } },
+            {
+              $group: {
+                _id: "$productId",
+                averageStars: { $avg: "$stars" },
+              },
+            },
+          ],
+          as: "rating",
+        },
       },
 
+      // Sort theo thời gian wishlist
       {
-        $replaceRoot: {
-          newRoot: { $arrayElemAt: ["$product", 0] },
+        $sort: { createdAt: -1 },
+      },
+
+      { $skip: skip },
+      { $limit: limit },
+
+      // Gộp product + rating vào 1 object
+      {
+        $project: {
+          product: { $arrayElemAt: ["$product", 0] },
+          rating: { $arrayElemAt: ["$rating", 0] },
+        },
+      },
+
+      // Trả ra format final
+      {
+        $project: {
+          _id: "$product._id",
+          name: "$product.name",
+          price: "$product.price",
+          defaultImage: "$product.defaultImage",
+          averageStars: "$rating.averageStars",
         },
       },
     ]);
+
+    const totalWishLists = await WishList.countDocuments({ userId });
 
     return res.status(200).json({
       status: "success",
       code: 200,
       message: "Lấy danh sách sản phẩm trong danh mục yêu thích",
       data: products,
+      pagination: {
+        page,
+        limit,
+        totalPages: Math.ceil(totalWishLists / limit),
+        totalWishLists,
+      },
     });
   } catch (error) {
     return res.status(500).json({
@@ -174,8 +222,43 @@ const getAllProductsInWishList = async (req, res) => {
   }
 };
 
+const checkWishList = async (req, res) => {
+  const { productId } = req.params;
+  const userId = req.user.userId;
+
+  // 1. Kiểm tra product,
+  const product = await Product.findById(productId);
+  if (!product) {
+    return res.status(404).json({
+      status: "error",
+      code: 404,
+      message: "Sản phẩm không tồn tại",
+    });
+  }
+
+  const wishlist = await WishList.findOne({ userId, productId });
+
+  // 2. Nếu sản phẩm đã thêm wishlist -> true. Ngược lại -> false
+  if (!wishlist) {
+    return res.status(200).json({
+      status: "success",
+      code: 200,
+      message: "Sản phẩm chưa thêm vào danh sách yêu thích",
+      data: false,
+    });
+  }
+
+  return res.status(200).json({
+    status: "success",
+    code: 200,
+    message: "Sản phẩm đã thêm vào danh sách yêu thích",
+    data: true,
+  });
+};
+
 module.exports = {
   addToWishlist,
   deleteProductOutWishList,
   getAllProductsInWishList,
+  checkWishList,
 };

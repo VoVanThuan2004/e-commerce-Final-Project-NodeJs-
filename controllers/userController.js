@@ -13,7 +13,7 @@ const getAllUsers = async (req, res) => {
       code: 403,
       message: "Không có quyền truy cập tài nguyên",
     });
-  }
+  } 
 
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 15;

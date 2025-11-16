@@ -41,3 +41,4 @@ router.post('/api/v1/auth/set-password', authController.setPassword);
 router.post('/api/v1/auth/logout', authController.logout);
 
 module.exports = router;
+   

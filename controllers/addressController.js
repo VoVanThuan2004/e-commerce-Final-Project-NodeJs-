@@ -3,8 +3,60 @@ const Address = require("../models/address");
 // Thêm địa chỉ mới
 const createAddress = async (req, res) => {
   try {
-    const address = new Address({ ...req.body, userId: req.user.userId });
-    const savedAddress = await address.save();
+    // 1. Kiểm tra dữ liệu đầu vào
+    const {
+      wardCode,
+      ward,
+      districtCode,
+      district,
+      provinceCode,
+      province,
+      addressDetail,
+    } = req.body;
+    if (
+      !wardCode ||
+      !ward ||
+      !districtCode ||
+      !district ||
+      !provinceCode ||
+      !province ||
+      !addressDetail
+    ) {
+      return res.status(400).json({
+        status: "error",
+        code: 400,
+        message: "Vui lòng nhập đầy đủ thông tin địa chỉ",
+      });
+    }
+
+    // 2. Nếu đây là địa chỉ đầu tiên - set địa chỉ mặc định
+    const oldAdddresss = await Address.findOne({ userId: req.user.userId });
+    let savedAddress;
+    if (!oldAdddresss) {
+      savedAddress = await Address.create({
+        userId: req.user.userId,
+        wardCode,
+        ward,
+        districtCode,
+        district,
+        provinceCode,
+        province,
+        addressDetail,
+        isDefault: true,
+      });
+    } else {
+      savedAddress = await Address.create({
+        userId: req.user.userId,
+        wardCode,
+        ward,
+        districtCode,
+        district,
+        provinceCode,
+        province,
+        addressDetail,
+        isDefault: false,
+      });
+    }
 
     return res.status(201).json({
       status: "success",
@@ -71,6 +123,7 @@ const deleteAddress = async (req, res) => {
       status: "success",
       code: 200,
       message: "Xóa địa chỉ thành công",
+      data: deleted._id,
     });
   } catch (error) {
     return res.status(500).json({
@@ -137,7 +190,7 @@ const setDefaultAddress = async (req, res) => {
       status: "success",
       code: 200,
       message: "Đặt địa chỉ mặc định thành công",
-      data: updated,
+      data: updated._id,
     });
   } catch (error) {
     return res.status(500).json({

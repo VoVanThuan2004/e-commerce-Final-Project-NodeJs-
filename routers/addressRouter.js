@@ -11,7 +11,7 @@ router.put('/api/v1/addresses/:addressId', auth, addressController.updateAddress
 router.delete('/api/v1/addresses/:addressId', auth, addressController.deleteAddress);   
 // API lấy tất cả địa chỉ của user
 router.get('/api/v1/addresses/', auth, addressController.getAllAddresses);
-// API cài đặt địa chỉ mặc định/api/v1/addressesh
+// API cài đặt địa chỉ mặc định/api/v1/addresses
 router.put('/api/v1/addresses/set-default/:addressId', auth, addressController.setDefaultAddress);
 
 module.exports = router;

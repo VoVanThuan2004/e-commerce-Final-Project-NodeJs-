@@ -17,6 +17,14 @@ const cartSchema = new mongoose.Schema(
 );
 
 // Tạo TTL (Time to Live) thời gian sống, mongo sẽ tự xóa schema nếu hết hạn
-cartSchema.index({ expires_at: 1 }, { expireAfterSeconds: 0 });
+cartSchema.index(
+  { expires_at: 1 },
+  {
+    expireAfterSeconds: 0,
+    partialFilterExpression: { userId: null }, // chỉ guest
+  }
+);
+
+cartSchema.index({ userId: 1, sessionId: 1 });
 
 module.exports = mongoose.model("Cart", cartSchema);

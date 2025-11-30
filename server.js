@@ -29,6 +29,8 @@ const dashboardRouter = require("./routers/dashboardRouter");
 const authRouter = require("./routers/authRouter");
 
 app.use(cors());
+const bodyParser = require("body-parser");
+
 app.use(express.json());
 app.use(
   session({

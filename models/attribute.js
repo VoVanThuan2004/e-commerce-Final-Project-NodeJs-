@@ -4,6 +4,10 @@ const attributeSchema = new mongoose.Schema({
     attributeName: {
         type: String,
         required: true,
+    },
+    order: {
+        type: Number,
+        index: true
     }
 }, {
     timestamps: true

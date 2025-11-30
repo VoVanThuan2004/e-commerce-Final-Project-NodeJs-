@@ -18,8 +18,6 @@ const initAdminAccount = async () => {
         console.log('Role USER đã được tạo!');
     }
 
-
-
     // Kiểm tra role admin có tồn tại chưa
     let roleAdminExisting = await Role.findOne({ roleName: roleAdmin });
     if (!roleAdminExisting) {

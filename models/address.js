@@ -15,7 +15,7 @@ const addressSchema = new mongoose.Schema(
     provinceCode: { type: String, required: true },
     province: { type: String, required: true },
     addressDetail: { type: String, required: true },
-    isDefault: { type: Boolean, required: true }
+    isDefault: { type: Boolean, required: true}
   },
   {
     timestamps: true,

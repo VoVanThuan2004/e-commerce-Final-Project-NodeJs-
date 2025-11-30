@@ -15,6 +15,7 @@ const reviewRouter = require("./routers/reviewRouter");
 const ratingRouter = require("./routers/ratingRouter");
 const couponRouter = require("./routers/couponRouter");
 const wishListRouter = require("./routers/wishListRouter");
+const addressRouter = require("./routers/addressRouter");
 const createIndexES = require("./config/createIndexES");
 const { initSocket } = require("./config/socket");
 const http = require("http");
@@ -24,6 +25,19 @@ app.use(cors());
 const bodyParser = require("body-parser");
 
 app.use(express.json());
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: true,
+    cookie: {
+      maxAge: 5 * 24 * 60 * 60 * 1000, // 7 ngày
+      secure: process.env.NODE_ENV === "production", // HTTPS in production
+      httpOnly: true, // Chống XSS
+      sameSite: "lax", // CSRF protection
+    },
+  })
+);
 
 const server = http.createServer(app);
 initSocket(server); // Khởi tạo socket với server
@@ -57,4 +71,5 @@ app.use(wishListRouter);
 // Kết nối Server
 server.listen(PORT, () => {
   console.log(`http://localhost:${PORT}`);
+  cleanupCartItem();
 });

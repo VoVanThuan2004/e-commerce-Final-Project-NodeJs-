@@ -1,6 +1,6 @@
 const Attribute = require("../models/attribute");
 const AttributeValue = require("../models/attributeValue");
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 const createAttribute = async (req, res) => {
   const roleName = req.user.roleName;
@@ -12,18 +12,19 @@ const createAttribute = async (req, res) => {
     });
   }
 
-  const { attributeName } = req.body;
-  if (!attributeName) {
+  const { attributeName, order } = req.body;
+  if (!attributeName || !order) {
     return res.status(400).json({
       status: "error",
       code: 400,
-      message: "Vui lòng nhập thông tin tên thuộc tính",
+      message: "Vui lòng nhập thông tin tên thuộc tính, độ ưu tiên hiển thị",
     });
   }
 
   try {
     const attribute = await Attribute.create({
       attributeName: attributeName,
+      order,
     });
 
     return res.status(201).json({
@@ -52,12 +53,20 @@ const updateAttribute = async (req, res) => {
   }
 
   const attributeId = req.params.attributeId;
-  const { attributeName } = req.body;
-  if (!attributeId || !attributeName) {
+  if (!mongoose.Types.ObjectId.isValid(attributeId)) {
     return res.status(400).json({
       status: "error",
       code: 400,
-      message: "Vui lòng nhập thông tin id thuộc tính, tên thuộc tính",
+      message: "ID không hợp lệ",
+    });
+  }
+
+  const { attributeName, order } = req.body;
+  if (!attributeName || !order) {
+    return res.status(400).json({
+      status: "error",
+      code: 400,
+      message: "Vui lòng nhập thông tin tên thuộc tính, độ ưu tiên hiển thị",
     });
   }
 
@@ -81,6 +90,7 @@ const updateAttribute = async (req, res) => {
 
     // cập nhật thuộc tính
     attribute.attributeName = attributeName;
+    attribute.order = order;
     await attribute.save();
 
     return res.status(200).json({
@@ -172,14 +182,31 @@ const getAllAttributes = async (req, res) => {
     });
   }
 
+  let { page, limit } = req.query;
+  page = parseInt(page) || 1;
+  limit = parseInt(limit) || 20;
+
+  const skip = (page - 1) * limit;
+
   try {
-    const attributes = await Attribute.find();
+    const [attributes, totalAttributes] = await Promise.all([
+      Attribute.find().sort({ order: 1 }).skip(skip).limit(limit),
+      Attribute.countDocuments(),
+    ]);
+
+    const totalPages = Math.ceil(totalAttributes / limit);
 
     return res.status(200).json({
       status: "success",
       code: 200,
       message: "Lấy tất cả thuộc tính",
       data: attributes,
+      pagination: {
+        page: page,
+        limit: limit,
+        totalAttributes,
+        totalPages,
+      },
     });
   } catch (error) {
     return res.status(500).json({

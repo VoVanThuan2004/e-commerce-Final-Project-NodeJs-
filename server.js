@@ -21,6 +21,8 @@ const http = require("http");
 const PORT = process.env.PORT;
 
 app.use(cors());
+const bodyParser = require("body-parser");
+
 app.use(express.json());
 
 const server = http.createServer(app);

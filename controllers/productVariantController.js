@@ -575,7 +575,7 @@ const updateInventory = async (req, res) => {
         message: "Tồn kho của sản phẩm biến thể không tồn tại",
       });
     }
-    inventory.quantity = newQuantity;
+    inventory.quantity = Number(newQuantity) + inventory.reversed;
     await inventory.save();
 
     return res.status(200).json({

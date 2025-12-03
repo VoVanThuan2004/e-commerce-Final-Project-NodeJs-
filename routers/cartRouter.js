@@ -16,6 +16,6 @@ router.put("/api/v1/cart/quantity/:cartItemId", cartController.updateQuantityCar
 router.get("/api/v1/cart", cartController.getCart);
 
 // Gộp giỏ hàng khi guest login
-router.get("/api/v1/cart/merge", auth, cartController.mergeCart);
+router.post("/api/v1/cart/merge", auth, cartController.mergeCart);
 
 module.exports = router;

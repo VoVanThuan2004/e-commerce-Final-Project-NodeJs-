@@ -126,19 +126,20 @@ const vnpayReturn = async (req, res) => {
         const order = await Order.findOne({ orderCode });
 
         // Lấy thông tin giỏ hàng
-        const cart = await Cart.findOne({ userId: order.userId });
+        let cart;
+        if (order.cartSessionId) {
+          cart = await Cart.findOne({ sessionId: order.cartSessionId });
+        } else {
+          cart = await Cart.findOne({ userId: order.userId });
+        }
         const cartItems = await CartItem.find({ cartId: cart._id }).populate(
           "productVariantId"
         );
 
         const user = await User.findById(order.userId);
-        const address = await Address.findOne({
-          userId: user._id,
-          isDefault: true,
-        });
 
         // Nếu một trong các thông tin không hợp lệ thì trả về lỗi, xóa order đã tạo, cập nhật lại reversed stock
-        if (!order || !cart || cartItems.length === 0 || !user || !address) {
+        if (!order || !cart || cartItems.length === 0 || !user) {
           // Xóa order đã tạo
           await Order.deleteOne({ orderCode });
           // Cập nhật lại reversed stock
@@ -156,6 +157,7 @@ const vnpayReturn = async (req, res) => {
 
           // Cập nhật lại điểm tích lũy đã cộng
           user.loyaltyPoints += Math.ceil(order.totalPrice / 1000);
+          user.isActive = true;
           await user.save();
 
           // Nếu có sử dụng mã giảm giá, cộng đi số lượng đã dùng
@@ -178,10 +180,10 @@ const vnpayReturn = async (req, res) => {
         ghnData = await createGHNOrder({
           to_name: user.fullName || fullName,
           to_phone: user.phoneNumber || phoneNumber,
-          to_address: `${address.addressDetail}, ${address.ward}, ${address.district}, ${address.province}`,
-          to_province: address.province,
-          to_district: address.district,
-          to_ward: address.ward,
+          to_address: `${order.addressDetail}, ${order.ward}, ${order.district}, ${order.province}`,
+          to_province: order.province,
+          to_district: order.district,
+          to_ward: order.ward,
           cod_amount: Math.round(order.totalPrice), // GHN yêu cầu nguyên
           weight: cartItems.reduce(
             (s, i) => s + (i.productVariantId.weight || 200) * i.quantity,
@@ -248,7 +250,7 @@ const vnpayReturn = async (req, res) => {
 
         // Nếu đây là khách hàng mới mua hàng (không login) -> gửi email
         if (order.isGuestAccount === true) {
-          await sendAccountPasswordAfterOrder(user.email, order.guestPassword);
+          await sendAccountPasswordAfterOrder(user.email, order.guestPassword, user.fullName, order.orderCode);
           order.guestPassword = null;
           await order.save();
         }
@@ -257,9 +259,7 @@ const vnpayReturn = async (req, res) => {
         await CartItem.deleteMany({ cartId: cart._id });
         await Cart.deleteOne({ _id: cart._id });
 
-        return res.redirect(
-          `${process.env.FE_URL}/user-orders?status=success`
-        );
+        return res.redirect(`${process.env.FE_URL}/user-orders?status=success`);
       } catch (error) {
         return res.status(500).json({
           status: "error",
@@ -303,12 +303,6 @@ const vnpayReturn = async (req, res) => {
 
           // 5. Xóa Order
           await Order.deleteOne({ _id: order._id });
-
-          // 6. Xóa cart
-          // if (cart) {
-          //   await CartItem.deleteMany({ cartId: cart._id });
-          //   await Cart.deleteOne({ _id: cart._id });
-          // }
         }
 
         console.log("Thanh toán thất bại → rollback dữ liệu OK");

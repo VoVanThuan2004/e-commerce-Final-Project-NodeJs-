@@ -10,253 +10,326 @@ const PaymentMethod = require("../constants/paymentMethod");
 const Address = require("../models/address");
 const {
   createGHNOrder,
-  calculateGHNShippingFee,
+  calculateGHNShippingFeeV2,
 } = require("../services/ghnService");
 const OrderShipment = require("../models/orderShipment");
 const Role = require("../models/role");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
-const { sendPasswordCreateAccount } = require("../config/mailConfig");
+const {
+  sendPasswordCreateAccount,
+  sendOrderConfirmationEmail,
+  sendAccountPasswordAfterOrder,
+} = require("../config/mailConfig");
 const OrderStatus = require("../constants/orderStatus");
 const paymentController = require("../controllers/paymentController");
+const crypto = require("crypto");
+const bcrypt = require("bcrypt");
 
 const createOrder = async (req, res) => {
-  // Xử lý transaction
   const session = await mongoose.startSession();
   session.startTransaction();
+
   try {
-    // ====== 1. Xử lý user (nếu có token) ======
+    // ====== 1. Xác thực user (nếu có token) ======
+    let userId = null;
     if (req.headers.authorization) {
-      const SECRET_KEY = process.env.SECRET_KEY;
       const token = req.headers.authorization.split(" ")[1];
-      const decoded = jwt.verify(token, SECRET_KEY);
-      req.user = decoded;
+      const decoded = jwt.verify(token, process.env.SECRET_KEY);
+      userId = decoded.userId;
     }
 
-    const userId = req.user ? req.user.userId : null;
     const {
       cartId,
+      sessionId,
       couponCode,
       loyaltyPoints = 0,
       paymentMethod,
-      sessionId,
+      // Chỉ dành cho guest
+      email,
+      fullName,
+      phoneNumber,
+      wardCode,
+      ward,
+      districtCode,
+      district,
+      provinceCode,
+      province,
+      addressDetail,
     } = req.body;
 
     if (!paymentMethod) {
       return res.status(400).json({
         status: "error",
-        code: 400,
         message: "Vui lòng chọn phương thức thanh toán",
       });
+      return;
     }
 
     if (!userId && !sessionId) {
       return res.status(400).json({
         status: "error",
-        code: 400,
-        message: "Thiếu sessionId cho người dùng chưa đăng nhập",
+        message: "Thiếu sessionId cho khách vãng lai",
       });
     }
 
     // ====== 2. Tìm giỏ hàng ======
     const cart = sessionId
-      ? await Cart.findOne({ sessionId })
-      : await Cart.findById(cartId);
+      ? await Cart.findOne({ sessionId }).session(session)
+      : await Cart.findById(cartId).session(session);
 
     if (!cart)
-      return res.status(404).json({
-        status: "error",
-        code: 404,
-        message: "Giỏ hàng không tồn tại",
-      });
+      return res
+        .status(404)
+        .json({ status: "error", message: "Giỏ hàng không tồn tại" });
 
-    // ====== 3. Lấy sản phẩm trong giỏ hàng ======
-    const cartItems = await CartItem.find({ cartId: cart._id }).populate({
-      path: "productVariantId",
-      select: "name sellingPrice weight width height length imageUrl",
-    });
+    // ====== 3. Lấy sản phẩm trong giỏ hàng + ảnh từ Product (defaultImage) ======
+    const cartItems = await CartItem.find({ cartId: cart._id })
+      .populate({
+        path: "productVariantId",
+        select: "name sellingPrice weight width height length productId", // thêm productId
+        populate: {
+          path: "productId",
+          select: "defaultImage", // chỉ lấy ảnh đại diện của sản phẩm
+        },
+      })
+      .session(session)
+      .lean();
 
-    if (!cartItems.length)
-      return res.status(400).json({
-        status: "error",
-        code: 400,
-        message: "Giỏ hàng hiện chưa có sản phẩm",
-      });
-
-    // ====== 4. Kiểm tra tồn kho và tính tổng ======
-    let totalPrice = 0;
-
-    for (const item of cartItems) {
-      const variant = item.productVariantId;
-      if (!variant || typeof variant.sellingPrice !== "number") {
-        return res.status(400).json({
-          status: "error",
-          code: 400,
-          message: "Sản phẩm có dữ liệu giá không hợp lệ",
-        });
-      }
-
-      const inventory = await Inventory.findOne({
-        productVariantId: variant._id,
-      });
-      if (!inventory || inventory.quantity < item.quantity) {
-        return res.status(400).json({
-          status: "error",
-          code: 400,
-          message: "Sản phẩm không đủ số lượng tồn kho",
-        });
-      }
-
-      totalPrice += variant.sellingPrice * item.quantity;
+    if (cartItems.length === 0) {
+      return res
+        .status(400)
+        .json({ status: "error", message: "Giỏ hàng trống" });
     }
 
-    // ====== 5. Áp dụng mã giảm giá ======
+    let totalPrice = 0;
+    const items = [];
+    for (const item of cartItems) {
+      const v = item.productVariantId;
+      if (!v || typeof v.sellingPrice !== "number") {
+        return res
+          .status(400)
+          .json({ status: "error", message: "Dữ liệu sản phẩm lỗi" });
+      }
+      totalPrice += v.sellingPrice * item.quantity;
+
+      items.push({
+        name: v.name || "Sản phẩm",
+        quantity: item.quantity,
+        weight: v.weight,
+        length: v.length || 20,
+        width: v.width || 15,
+        height: v.height || 10,
+      });
+    }
+
+    // ====== 4. Áp dụng coupon ======
     let coupon = null;
     let discountPrice = 0;
-
     if (couponCode) {
-      coupon = await Coupon.findOne({ couponCode });
-      if (!coupon) {
-        return res.status(404).json({
-          status: "error",
-          code: 404,
-          message: "Mã giảm giá không hợp lệ",
-        });
-      }
+      coupon = await Coupon.findOne({ couponCode }).session(session);
+      if (!coupon)
+        return res
+          .status(404)
+          .json({ status: "error", message: "Mã giảm giá không tồn tại" });
       discountPrice = Number(coupon.discountPrice) || 0;
       totalPrice -= discountPrice;
     }
 
-    const totalItems = cartItems.length;
-
-    // ====== 6. Xử lý người dùng và địa chỉ ======
-    let user, address;
-    if (cart.sessionId) {
-      // khách chưa đăng nhập
-      const {
-        email,
-        fullName,
-        phoneNumber,
-        wardCode,
-        ward,
-        districtCode,
-        district,
-        provinceCode,
-        province,
-        addressDetail,
-      } = req.body;
-
-      if (
-        !email ||
-        !fullName ||
-        !phoneNumber ||
-        !addressDetail ||
-        !wardCode ||
-        !ward ||
-        !districtCode ||
-        !district ||
-        !provinceCode ||
-        !province
-      ) {
-        return res.status(400).json({
-          status: "error",
-          code: 400,
-          message: "Vui lòng nhập đầy đủ thông tin giao hàng",
-        });
-      }
-
-      user = await User.findOne({ email });
-      if (!user) {
-        const role = await Role.findOne({ roleName: "USER" });
-
-        user = await User.create({
-          roleId: role._id,
-          email,
-          fullName,
-          phoneNumber,
-          isActive: false,
-        });
-
-        address = await Address.create({
-          userId: user._id,
-          ward,
-          wardCode,
-          district,
-          districtCode,
-          province,
-          provinceCode,
-          addressDetail,
-          isDefault: true,
-        });
-
-        // Tạo tài khoản mới
-      } else {
-        address = await Address.findOne({ userId: user._id, isDefault: true });
-      }
-    } else {
-      // người dùng đã đăng nhập
-      user = await User.findById(userId);
-      if (!user)
-        return res.status(404).json({
-          status: "error",
-          code: 404,
-          message: "Người dùng không tồn tại",
-        });
-
-      address = await Address.findOne({ userId, isDefault: true });
-      if (!address)
-        return res.status(404).json({
-          status: "error",
-          code: 404,
-          message: "Vui lòng thêm địa chỉ mặc định",
-        });
-
-      // trừ điểm tích lũy
-      if (loyaltyPoints > 0) {
-        if (loyaltyPoints > user.loyaltyPoints)
-          return res.status(400).json({
-            status: "error",
-            code: 400,
-            message: "Số điểm tích lũy vượt quá số điểm hiện có",
-          });
-
-        totalPrice -= loyaltyPoints * 1000;
-      }
+    // ====== 5. Trừ số tiền tương đương điểm tích lũy nếu có ======
+    if (loyaltyPoints > 0) {
+      totalPrice -= loyaltyPoints * 1000;
     }
 
-    // ====== 7. Xử lý phương thức thanh toán ======
+    // ==================================================================
+    // ================== THANH TOÁN COD =============================
+    // ==================================================================
     if (paymentMethod === PaymentMethod.CASH) {
       const orderCode = "ORD" + Date.now();
 
-      // Gọi API GHN trước để có phí ship
-      const ghnData = await createGHNOrder({
-        to_name: user.fullName,
-        to_phone: user.phoneNumber,
-        to_address: `${address.addressDetail}, ${address.ward}, ${address.district}, ${address.province}`,
-        to_ward_code: address.wardCode,
-        to_district_id: address.districtCode,
-        cod_amount: totalPrice,
-        items: cartItems.map((item) => ({
-          name: item.productVariantId.name,
-          code: item.productVariantId._id.toString(),
-          quantity: item.quantity,
-          price: item.productVariantId.sellingPrice,
-          length: item.productVariantId.length,
-          width: item.productVariantId.width,
-          height: item.productVariantId.height,
-          weight: item.productVariantId.weight,
-        })),
-      });
+      // BƯỚC 1: GIỮ HÀNG TRƯỚC KHI GỌI GHN (QUAN TRỌNG NHẤT
+      for (const item of cartItems) {
+        const variantId = item.productVariantId._id;
 
-      if (!ghnData || ghnData.code !== 200) {
-        console.log("GHN response:", ghnData);
-        throw new Error("Không thể tạo đơn hàng giao hàng nhanh");
+        const inventory = await Inventory.findOne({
+          productVariantId: variantId,
+        }).session(session);
+        if (!inventory) throw new Error("Sản phẩm không tồn tại trong kho");
+
+        const available = inventory.quantity - inventory.reversed;
+        if (available < item.quantity) {
+          throw new Error(
+            `${item.productVariantId.name} chỉ còn ${available} sản phẩm`
+          );
+        }
+
+        const updated = await Inventory.findOneAndUpdate(
+          {
+            productVariantId: variantId,
+            quantity: { $gte: available },
+            reversed: inventory.reversed,
+          },
+          { $inc: { reversed: item.quantity } },
+          { session, new: true }
+        );
+
+        if (!updated)
+          throw new Error(
+            `${item.productVariantId.name} vừa được đặt bởi khách khác`
+          );
+      }
+
+      // ====== 5. Xử lý user & địa chỉ ======
+      let user, address;
+      let password;
+      if (sessionId) {
+        // Khách vãng lai
+        if (
+          !email ||
+          !fullName ||
+          !phoneNumber ||
+          !addressDetail ||
+          !wardCode ||
+          !districtCode ||
+          !provinceCode
+        ) {
+          for (const item of cartItems) {
+            await Inventory.updateOne(
+              { productVariantId: item.productVariantId._id },
+              { $inc: { reversed: -item.quantity } },
+              { session }
+            );
+          }
+
+          return res.status(400).json({
+            status: "error",
+            message: "Vui lòng nhập đầy đủ thông tin giao hàng",
+          });
+        }
+
+        user = await User.findOne({ email }).session(session);
+
+        if (!user) {
+          const role = await Role.findOne({ roleName: "USER" }).session(
+            session
+          );
+          password = generateRandomPassword(10);
+          const hashed = await bcrypt.hash(password, 10);
+
+          user = await User.create(
+            [
+              {
+                roleId: role._id,
+                email,
+                fullName,
+                phoneNumber,
+                password: hashed,
+                isActive: false,
+              },
+            ],
+            { session }
+          )[0];
+
+          address = await Address.create(
+            [
+              {
+                userId: user._id,
+                ward,
+                wardCode,
+                district,
+                districtCode,
+                province,
+                provinceCode,
+                addressDetail,
+                isDefault: true,
+              },
+            ],
+            { session }
+          )[0];
+        } else {
+          address = {
+            userId: user._id,
+            ward,
+            wardCode,
+            district,
+            districtCode,
+            province,
+            provinceCode,
+            addressDetail,
+          };
+        }
+      } else {
+        // Đã đăng nhập
+        user = await User.findById(userId).session(session);
+        if (!user)
+          return res
+            .status(404)
+            .json({ status: "error", message: "User không tồn tại" });
+
+        address = await Address.findOne({
+          userId: userId,
+          isDefault: true,
+        }).session(session);
+        if (!address)
+          return res
+            .status(400)
+            .json({ status: "error", message: "Chưa có địa chỉ mặc định" });
+
+        if (loyaltyPoints > 0) {
+          if (loyaltyPoints > user.loyaltyPoints) {
+            return res
+              .status(400)
+              .json({ status: "error", message: "Điểm tích lũy không đủ" });
+          }
+          totalPrice -= loyaltyPoints * 1000;
+        }
+      }
+
+      // BƯỚC 2: GỌI GHN TẠO ĐƠN
+      let ghnData;
+      try {
+        ghnData = await createGHNOrder({
+          to_name: user.fullName || fullName,
+          to_phone: user.phoneNumber || phoneNumber,
+          to_address: `${address.addressDetail}, ${address.ward}, ${address.district}, ${address.province}`,
+          to_province: address.province,
+          to_district: address.district,
+          to_ward: address.ward,
+          cod_amount: Math.round(totalPrice), // GHN yêu cầu nguyên
+          weight: cartItems.reduce(
+            (s, i) => s + (i.productVariantId.weight || 200) * i.quantity,
+            0
+          ),
+          items: cartItems.map((i) => ({
+            name: i.productVariantId.name,
+            code: i.productVariantId._id.toString(),
+            quantity: i.quantity,
+            price: i.productVariantId.sellingPrice,
+            weight: i.productVariantId.weight || 200,
+            length: i.productVariantId.length || 10,
+            width: i.productVariantId.width || 10,
+            height: i.productVariantId.height || 10,
+          })),
+        });
+
+        if (!ghnData || ghnData.code !== 200)
+          throw new Error("GHN từ chối tạo đơn");
+      } catch (err) {
+        // TRẢ LẠI HÀNG ĐÃ GIỮ
+        for (const item of cartItems) {
+          await Inventory.updateOne(
+            { productVariantId: item.productVariantId._id },
+            { $inc: { reversed: -item.quantity } },
+            { session }
+          );
+        }
+        throw err;
       }
 
       const { total_fee, order_code, expected_delivery_time } = ghnData.data;
 
-      // ====== 8. Tạo Order ======
-      const order = await Order.create({
+      // BƯỚC 3: TẠO ĐƠN HÀNG
+      const order = new Order({
         orderCode,
         userId: user._id,
         phoneNumber: user.phoneNumber,
@@ -268,10 +341,10 @@ const createOrder = async (req, res) => {
         province: address.province,
         addressDetail: address.addressDetail,
         totalPrice: totalPrice + total_fee,
-        totalQuantity: totalItems,
+        totalQuantity: cartItems.length,
         loyaltyPoints,
-        couponId: coupon ? coupon._id : null,
-        couponCode: coupon ? coupon.couponCode : null,
+        couponId: coupon?._id,
+        couponCode: coupon?.couponCode,
         discountPrice,
         currentStatus: OrderStatus.PENDING,
         paymentStatus: "UNPAID",
@@ -280,265 +353,379 @@ const createOrder = async (req, res) => {
         estimatedDelivery: expected_delivery_time,
         shippingFee: total_fee,
         serviceId: 2,
-      });
-
-      // ====== 9. Tạo OrderItem và cập nhật tồn kho ======
-      for (const item of cartItems) {
-        const variant = item.productVariantId;
-        await OrderItem.create({
-          orderId: order._id,
-          productVariantId: variant._id,
-          quantity: item.quantity,
-          name: variant.name,
-          imageUrl: variant.imageUrl,
-          price: variant.sellingPrice,
-        });
-
-        await Inventory.updateOne(
-          { productVariantId: variant._id },
-          { $inc: { quantity: -item.quantity } }
-        );
-      }
-
-      // ====== 10. Tạo OrderShipment ======
-      await OrderShipment.create({
-        orderId: order._id,
         ghnOrderCode: order_code,
-        serviceId: 2,
-        fee: total_fee,
-        status: "PENDING",
-        expectedDeliveryTime: expected_delivery_time,
       });
 
-      // ====== 11. Cập nhật điểm tích lũy & coupon ======
-      if (loyaltyPoints > 0) {
-        user.loyaltyPoints -= loyaltyPoints;
-      }
-      user.loyaltyPoints += Math.ceil(order.totalPrice / 1000);
-      await user.save();
+      await order.save({ session });
 
-      if (coupon) {
-        coupon.usedCount += 1;
-        await coupon.save();
-      }
+      // Tạo OrderItem
+      await OrderItem.insertMany(
+        cartItems.map((item) => {
+          const variant = item.productVariantId;
 
-      await OrderHistory.create({
-        orderId: order._id,
-        status: OrderStatus.PENDING,
-      });
-
-      // Xóa giỏ hàng
-      await CartItem.deleteMany({ cartId: cart._id });
-      await Cart.findOneAndDelete({ _id: cart._id });
-
-      // Gửi email tạo tài khoản -> nếu đây là khách hàng mới
-      if (user.isActive === false) {
-        const token = jwt.sign(
-          {
-            email: user.email,
-            type: "set_password",
-          },
-          process.env.SECRET_KEY,
-          {
-            expiresIn: "2h",
-          }
-        );
-        await sendPasswordCreateAccount(user.email, token, user.fullName);
-      }
-
-      // Commit transaction
-      await session.commitTransaction();
-
-      // Gửi email về nội dung order đã đặt
-      await sendOrderConfirmationEmail(order, user.email, user.fullName);
-
-      return res.status(201).json({
-        status: "success",
-        code: 201,
-        message: "Tạo đơn hàng thành công",
-      });
-    } else if (paymentMethod === PaymentMethod.VNPAY) {
-      const orderCode = "ORD" + Date.now();
-
-      // Tính tổng trọng lượng
-      const totalWeight = cartItems.reduce(
-        (sum, item) => sum + item.productVariantId.weight * item.quantity,
-        0
+          return {
+            orderId: order._id,
+            productVariantId: variant._id,
+            quantity: item.quantity,
+            name: variant.name || "Sản phẩm không xác định",
+            price: variant.sellingPrice || 0,
+          };
+        }),
+        { session }
       );
 
-      // Tính kích thước trung bình (có thể thay bằng lớn nhất nếu GHN yêu cầu)
-      const avgHeight =
-        cartItems.reduce(
-          (sum, item) => sum + item.productVariantId.height * item.quantity,
-          0
-        ) / cartItems.reduce((sum, item) => sum + item.quantity, 0);
-
-      const avgLength =
-        cartItems.reduce(
-          (sum, item) => sum + item.productVariantId.length * item.quantity,
-          0
-        ) / cartItems.reduce((sum, item) => sum + item.quantity, 0);
-
-      const avgWidth =
-        cartItems.reduce(
-          (sum, item) => sum + item.productVariantId.width * item.quantity,
-          0
-        ) / cartItems.reduce((sum, item) => sum + item.quantity, 0);
-
-      // Gửi lên GHN để tính phí ship dựa trên địa chỉ
-      const ghnData = await calculateGHNShippingFee({
-        to_district_id: address.districtCode,
-        to_ward_code: address.wardCode,
-        height: Math.ceil(avgHeight),
-        length: Math.ceil(avgLength),
-        width: Math.ceil(avgWidth),
-        weight: totalWeight,
-        insurance_value: totalPrice,
-        items: cartItems.map((item) => ({
-          name: item.productVariantId.name,
-          quantity: item.quantity,
-          height: item.productVariantId.height,
-          weight: item.productVariantId.weight,
-          length: item.productVariantId.length,
-          width: item.productVariantId.width,
-        })),
-      });
-
-      if (!ghnData || ghnData.code !== 200) {
-        throw new Error("Không thể tính phí giao hàng");
-      }
-
-      const shippingFee = ghnData.data.total;
-      const totalPayment = totalPrice + shippingFee;
-
-      // Tạo session để tránh conflict giữa 2 người dùng đặt cùng lúc
-      const session = await mongoose.startSession();
-      console.log("Session created:", !!session);
-      session.startTransaction();
-      console.log(
-        "Transaction started:",
-        session.transaction.isActive ? "Active" : "Not active"
-      );
-
-      // ====== Tạo Order ======
-      const order = await Order.create(
+      await OrderShipment.create(
         [
           {
-            orderCode,
-            userId: user._id,
-            phoneNumber: user.phoneNumber,
-            wardCode: address.wardCode,
-            ward: address.ward,
-            districtCode: address.districtCode,
-            district: address.district,
-            provinceCode: address.provinceCode,
-            province: address.province,
-            addressDetail: address.addressDetail,
-            totalPrice: totalPrice,
-            totalQuantity: totalItems,
-            loyaltyPoints,
-            couponId: coupon ? coupon._id : null,
-            couponCode: coupon ? coupon.couponCode : null,
-            discountPrice,
-            currentStatus: OrderStatus.PENDING,
-            paymentStatus: "Chưa thanh toán",
-            paymentMethod,
-            purchaseTime: Date.now(),
+            orderId: order._id,
+            ghnOrderCode: order_code,
             serviceId: 2,
+            fee: total_fee,
+            status: "PENDING",
+            expectedDeliveryTime: expected_delivery_time,
           },
         ],
-        session
+        { session }
       );
 
-      // ====== 9. Tạo OrderItem và cập nhật tồn kho ======
-      for (const item of cartItems) {
-        const variant = item.productVariantId;
-
-        // Kiểm tra tồn kho có đủ không
-        const inventory = await Inventory.findOne({
-          productVariantId: variant._id,
-        }).session(session);
-
-        if (
-          !inventory ||
-          inventory.quantity - inventory.reversed < item.quantity
-        ) {
-          await session.abortTransaction();
-          return res.status(400).json({
-            status: "error",
-            code: 400,
-            message: `Sản phẩm ${variant.name} không đủ số lượng tồn kho`,
-          });
-        }
-
-        // Giữ hàng tạm thời
-        await Inventory.updateOne(
-          { productVariantId: variant._id },
-          { $inc: { reversed: item.quantity } }
-        ).session(session);
-
-        await OrderItem.create(
-          [
-            {
-              orderId: order[0]._id,
-              productVariantId: variant._id,
-              quantity: item.quantity,
-              name: variant.name,
-              price: variant.sellingPrice,
-            },
-          ],
-          session
-        );
-      }
-
-      // Tính điểm tích lũy cho user
-      if (loyaltyPoints > 0) {
-        user.loyaltyPoints -= loyaltyPoints;
-      }
-      user.loyaltyPoints += Math.ceil(totalPrice / 1000);
+      // Cập nhật điểm + coupon
+      user.loyaltyPoints =
+        user.loyaltyPoints -
+        loyaltyPoints +
+        Math.ceil((totalPrice + total_fee) / 1000);
       await user.save({ session });
 
-      // Cập nhật coupon đã sử dụng nếu có sử dụng
       if (coupon) {
         coupon.usedCount += 1;
         await coupon.save({ session });
       }
 
-      await session.commitTransaction();
-      session.endSession();
+      await OrderHistory.create(
+        [{ orderId: order._id, status: OrderStatus.PENDING }],
+        { session }
+      );
 
-      // Tạo URL thanh toán VNPAY
+      await session.commitTransaction();
+      // await session.end();
+
+      // Xóa giỏ
+      await CartItem.deleteMany({ cartId: cart._id }, { session });
+      await Cart.deleteOne({ _id: cart._id }, { session });
+
+      // Gửi email xác nhận
+      await sendOrderConfirmationEmail(order, user.email, user.fullName);
+
+      if (password) {
+        await sendAccountPasswordAfterOrder(user.email, password, user.fullName, order.orderCode);
+      }
+
+      return res.status(201).json({
+        status: "success",
+        message: "Đặt hàng COD thành công!",
+        data: { orderCode, ghnOrderCode: order_code },
+      });
+    }
+
+    // ==================================================================
+    // ================== THANH TOÁN VNPAY ==============================
+    // ==================================================================
+
+    if (paymentMethod === PaymentMethod.VNPAY) {
+      const orderCode = "ORD" + Date.now();
+
+      // ================== BƯỚC 1: GIỮ HÀNG TRƯỚC TIÊN (QUAN TRỌNG NHẤT) ==================
+      try {
+        for (const item of cartItems) {
+          const variantId = item.productVariantId._id;
+
+          const inventory = await Inventory.findOne({
+            productVariantId: variantId,
+          }).session(session);
+
+          if (!inventory) throw new Error("Sản phẩm không tồn tại");
+
+          const available = inventory.quantity - inventory.reversed;
+          if (available < item.quantity) {
+            throw new Error(
+              `${item.productVariantId.name} chỉ còn ${available} sản phẩm`
+            );
+          }
+
+          const updated = await Inventory.findOneAndUpdate(
+            {
+              productVariantId: variantId,
+              quantity: inventory.quantity,
+              reversed: inventory.reversed,
+            },
+            { $inc: { reversed: item.quantity } },
+            { session, new: true }
+          );
+
+          if (!updated)
+            throw new Error(
+              `${item.productVariantId.name} vừa được đặt bởi khách khác`
+            );
+        }
+      } catch (err) {
+        throw err;
+      }
+
+      let user;
+      let address;
+      let isGuestAccount = false;
+      let guestPassword;
+      if (userId) {
+        // Trường hợp có đăng nhập
+        user = await User.findById(userId).session(session);
+        if (!user) {
+          return res.status(404).json({
+            status: "error",
+            code: 404,
+            message: "Người dùng không tồn tại",
+          });
+        }
+
+        address = await Address.findOne({
+          userId: user._id,
+          isDefault: true,
+        }).session(session);
+        if (!address) {
+          return res.status(400).json({
+            status: "error",
+            code: 400,
+            message: "Chưa có địa chỉ mặc định",
+          });
+        }
+      } else {
+        // ================== GUEST CHECKOUT - GIỐNG HỆT COD ==================
+        let existingUser = await User.findOne({ email }).session(session);
+
+        if (!existingUser) {
+          // Email chưa từng tồn tại → tạo mới hoàn toàn
+          const role = await Role.findOne({ roleName: "USER" }).session(
+            session
+          );
+          const password = generateRandomPassword(10);
+          const hashed = await bcrypt.hash(password, 10);
+
+          const newUser = await User.create(
+            [
+              {
+                roleId: role._id,
+                email,
+                fullName,
+                phoneNumber: phoneNumber || null,
+                password: hashed,
+                isActive: true,
+              },
+            ],
+            { session }
+          );
+
+          user = newUser[0];
+          guestPassword = password;
+          isGuestAccount = true;
+
+          // Tạo địa chỉ mới từ thông tin khách nhập
+          const newAddr = await Address.create(
+            [
+              {
+                userId: user._id,
+                ward,
+                wardCode,
+                district,
+                districtCode,
+                province,
+                provinceCode,
+                addressDetail,
+                isDefault: true, // vẫn để mặc định cho lần đầu
+              },
+            ],
+            { session }
+          );
+
+          address = newAddr[0];
+        } else {
+          // Email ĐÃ TỒN TẠI → dùng lại user này
+          user = existingUser;
+          isGuestAccount = false;
+          guestPassword = null;
+
+          address = {
+            userId: user._id,
+            ward,
+            wardCode,
+            district,
+            districtCode,
+            province,
+            provinceCode,
+            addressDetail,
+          };
+        }
+      }
+
+      // ================== BƯỚC 2: TÍNH PHÍ SHIP ==================
+      let shippingFee = 0;
+      let expectedDeliveryTime = null;
+      let order_code = null;
+
+      try {
+        const totalWeight = cartItems.reduce(
+          (s, i) => s + (i.productVariantId.weight || 200) * i.quantity,
+          0
+        );
+
+        const avgDim = (key) =>
+          Math.max(
+            10,
+            Math.ceil(
+              cartItems.reduce(
+                (s, i) => s + (i.productVariantId[key] || 10) * i.quantity,
+                0
+              ) / cartItems.reduce((s, i) => s + i.quantity, 0)
+            )
+          );
+
+        console.log(address);
+        const ghnFeeData = await calculateGHNShippingFeeV2(
+          totalWeight,
+          avgDim("width"),
+          avgDim("length"),
+          avgDim("height"),
+          address,
+          items
+        );
+
+        if (!ghnFeeData || ghnFeeData.code !== 200)
+          throw new Error("Không tính được phí ship");
+
+        shippingFee = ghnFeeData.data.total;
+        expectedDeliveryTime = ghnFeeData.data.leadtime || null;
+        order_code = ghnFeeData.data.order_code;
+      } catch (err) {
+        // Lỗi tính phí → trả hàng
+        for (const item of cartItems) {
+          await Inventory.updateOne(
+            { productVariantId: item.productVariantId._id },
+            { $inc: { reversed: -item.quantity } },
+            { session }
+          );
+        }
+        throw err;
+      }
+
+      const totalPayment = totalPrice + shippingFee;
+
+      // ================== BƯỚC 3: TẠO ĐƠN HÀNG TẠM (CHỈ LƯU THÔNG TIN, CHƯA HOÀN TẤT) ==================
+
+      const order = new Order({
+        orderCode,
+        userId: user._id,
+        cartSessionId: sessionId ? sessionId : null,
+        phoneNumber: user.phoneNumber,
+        wardCode: address.wardCode,
+        ward: address.ward,
+        districtCode: address.districtCode,
+        district: address.district,
+        provinceCode: address.provinceCode,
+        province: address.province,
+        addressDetail: address.addressDetail,
+        totalPrice: totalPayment,
+        totalQuantity: cartItems.length,
+        loyaltyPoints,
+        couponId: coupon?._id,
+        couponCode: coupon?.couponCode,
+        discountPrice,
+        currentStatus: OrderStatus.PENDING_PAYMENT,
+        paymentStatus: "Chưa thanh toán",
+        paymentMethod: "VNPAY",
+        purchaseTime: Date.now(),
+        estimatedDelivery: expectedDeliveryTime,
+        shippingFee,
+        serviceId: 2,
+        ghnOrderCode: order_code,
+        isGuestAccount,
+        guestPassword,
+      });
+
+      await order.save({ session }); // ← CHÍNH XÁC
+
+      // ====== Lưu OrderItem – giờ đã có ảnh chính xác, không cần query thêm ======
+      await OrderItem.insertMany(
+        cartItems.map((item) => {
+          const variant = item.productVariantId;
+
+          return {
+            orderId: order._id,
+            productVariantId: variant._id,
+            quantity: item.quantity,
+            name: variant.name || "Sản phẩm không xác định",
+            price: variant.sellingPrice || 0,
+          };
+        }),
+        { session }
+      );
+      // KHÔNG TRỪ ĐIỂM, KHÔNG XÓA GIỎ, KHÔNG GỬI EMAIL
+
+      // Commit xong, dữ liệu order đã được cập nhật trong DB
+      await session.commitTransaction();
+
+      console.log(order);
+
+      // ================== BƯỚC 4: TẠO URL VNPAY ==================
       const paymentUrl = await paymentController.createVnpayPayment(
         orderCode,
         totalPayment,
         req
       );
+
       if (!paymentUrl) {
-        return res.status(500).json({
-          status: "error",
-          code: 500,
-          message: "Lỗi khi tạo URL thanh toán VNPAY",
-        });
+        // Lỗi tạo URL → hủy đơn + trả hàng
+        await Order.findByIdAndDelete(order._id);
+        for (const item of cartItems) {
+          await Inventory.updateOne(
+            { productVariantId: item.productVariantId._id },
+            { $inc: { reversed: -item.quantity } }
+          );
+        }
+
+        await OrderItem.deleteMany({ orderId: order._id });
+        // await OrderHistory.deleteMany({ orderId: order._id });
+        return res
+          .status(500)
+          .json({ status: "error", message: "Lỗi tạo thanh toán VNPAY" });
       }
 
-      return res.status(201).json({
+      return res.status(200).json({
         status: "success",
-        code: 201,
-        message: "Tạo URL thanh toán VNPAY thành công",
-        data: paymentUrl,
+        message: "Chuyển sang cổng thanh toán...",
+        data: {
+          orderCode,
+          paymentUrl,
+          totalPayment,
+        },
       });
     }
   } catch (error) {
     await session.abortTransaction();
+    console.error("Lỗi đặt hàng:", error);
     return res.status(500).json({
       status: "error",
-      code: 500,
-      message: "Lỗi hệ thống: " + error.message,
+      message: error.message || "Hệ thống bận, vui lòng thử lại",
     });
   } finally {
     session.endSession();
   }
 };
+
+function generateRandomPassword(length = 10) {
+  // Sinh chuỗi ngẫu nhiên rồi mã hóa base64 → cắt gọn
+  return crypto
+    .randomBytes(length)
+    .toString("base64")
+    .replace(/[^a-zA-Z0-9]/g, "") // loại ký tự đặc biệt để tránh lỗi khi gửi mail
+    .slice(0, length);
+}
 
 const getUserOrders = async (req, res) => {
   const userId = req.user.userId;
@@ -694,40 +881,157 @@ const getStatusOrders = async (req, res) => {
 };
 
 /** ADMIN **/
+
 const getOrdersByAdmin = async (req, res) => {
-  const roleName = req.user.roleName;
-  if (roleName !== "ADMIN") {
-    return res.status(403).json({
-      status: "error",
-      code: 403,
-      message: "Không có quyền truy cập tài nguyên này",
-    });
-  }
-
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 15;
-  const skip = (page - 1) * limit;
-
   try {
-    const [orders, totalOrders] = await Promise.all([
-      await Order.find().sort({ createdAt: -1 }).skip(skip).limit(limit),
-      await Order.find().countDocuments(),
-    ]);
+    // 1. Kiểm tra quyền ADMIN
+    if (req.user.roleName !== "ADMIN") {
+      return res.status(403).json({
+        status: "error",
+        code: 403,
+        message: "Không có quyền truy cập tài nguyên này",
+      });
+    }
 
-    const totalPages = Math.ceil(totalOrders / limit);
-    return res.status(200).json({
+    // 2. Phân trang
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 15;
+    const skip = (page - 1) * limit;
+
+    // 3. Các filter từ query
+    const { search, status, startDate, endDate, period } = req.query;
+
+    const match = {};
+
+    // Tìm kiếm mã đơn hàng
+    if (search?.trim()) {
+      match.orderCode = { $regex: search.trim(), $options: "i" };
+    }
+
+    // Lọc trạng thái
+    if (status && status !== "all" && status !== "") {
+      match.currentStatus = status;
+    }
+
+    // XỬ LÝ LỌC NHANH THEO PERIOD (rất quan trọng cho UI đẹp của bạn)
+    if (period) {
+      const now = new Date();
+      const startOfDay = new Date(now);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(now);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      if (!match.purchaseTime) match.purchaseTime = {};
+
+      switch (period) {
+        case "today":
+          match.purchaseTime.$gte = startOfDay;
+          match.purchaseTime.$lte = endOfDay;
+          break;
+        case "yesterday":
+          const yesterday = new Date(now);
+          yesterday.setDate(now.getDate() - 1);
+          const startYesterday = new Date(yesterday);
+          startYesterday.setHours(0, 0, 0, 0);
+          const endYesterday = new Date(yesterday);
+          endYesterday.setHours(23, 59, 59, 999);
+          match.purchaseTime.$gte = startYesterday;
+          match.purchaseTime.$lte = endYesterday;
+          break;
+        case "thisWeek":
+          const startOfWeek = new Date(now);
+          startOfWeek.setDate(now.getDate() - now.getDay() + 1); // Thứ 2
+          startOfWeek.setHours(0, 0, 0, 0);
+          match.purchaseTime.$gte = startOfWeek;
+          break;
+        case "thisMonth":
+          const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+          match.purchaseTime.$gte = startOfMonth;
+          break;
+      }
+    }
+
+    // Lọc theo ngày tùy chỉnh (ưu tiên hơn period)
+    if (startDate || endDate) {
+      match.purchaseTime = {};
+      if (startDate) {
+        match.purchaseTime.$gte = new Date(startDate);
+        match.purchaseTime.$gte.setHours(0, 0, 0, 0);
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        match.purchaseTime.$lte = end;
+      }
+    }
+
+    // Aggregation pipeline
+    const pipeline = [
+      { $match: match },
+
+      // Join user để lấy fullName + phone
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "_id",
+          as: "user",
+        },
+      },
+      { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
+
+      // Sắp xếp mới nhất trước
+      { $sort: { purchaseTime: -1 } },
+
+      // Phân trang
+      { $skip: skip },
+      { $limit: limit },
+
+      // Project để trả dữ liệu sạch, đúng như FE đang dùng
+      {
+        $project: {
+          _id: 1,
+          orderCode: 1,
+          totalPrice: 1,
+          currentStatus: 1,
+          paymentMethod: 1,
+          purchaseTime: 1,
+          shippingFee: 1,
+          discountPrice: 1,
+          couponCode: 1,
+          loyaltyPoints: 1,
+          addressDetail: 1,
+          ward: 1,
+          district: 1,
+          province: 1,
+          estimatedDelivery: 1,
+          fullName: { $ifNull: ["$user.fullName", "Khách lẻ"] },
+          phoneNumber: { $ifNull: ["$user.phoneNumber", "Không có"] },
+          email: "$user.email",
+        },
+      },
+    ];
+
+    const orders = await Order.aggregate(pipeline);
+
+    // Đếm tổng (riêng để chính xác)
+    const countPipeline = [{ $match: match }, { $count: "total" }];
+    const countResult = await Order.aggregate(countPipeline);
+    const totalRecords = countResult[0]?.total || 0;
+
+    return res.json({
       status: "success",
       code: 200,
-      message: "Lấy danh sách đơn hàng thành công",
       data: orders,
       pagination: {
         page,
         limit,
-        totalOrders,
-        totalPages,
+        totalRecords,
+        totalPages: Math.ceil(totalRecords / limit),
       },
     });
   } catch (error) {
+    console.error("Admin get orders error:", error);
     return res.status(500).json({
       status: "error",
       code: 500,
@@ -791,6 +1095,20 @@ const updateStatusOrder = async (req, res) => {
       order.currentStatus = OrderStatus.DELIVERIED;
       order.paymentStatus = "Đã thanh toán";
       await order.save();
+
+      // Cập nhật lại reversed tồn kho
+      const orderItems = await OrderItem.find({ orderId: order._id }).select(
+        "_id productVariantId quantity"
+      );
+
+      for (const item of orderItems) {
+        await Inventory.findOneAndUpdate(
+          { productVariantId: item.productVariantId },
+          {
+            $inc: { reversed: -item.quantity, quantity: -item.quantity },
+          }
+        );
+      }
     } else {
       return res.status(400).json({
         status: "error",

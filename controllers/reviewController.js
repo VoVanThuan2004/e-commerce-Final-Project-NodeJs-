@@ -9,173 +9,105 @@ const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
 const postReview = async (req, res) => {
-  const SECRET_KEY = process.env.SECRET_KEY;
+  let userId = null;
+  let userFullName = null;
+
+  // === XỬ LÝ TOKEN AN TOÀN (không crash server) ===
   const authHeader = req.headers.authorization;
-  const token = authHeader.split(" ")[1];
-  const decoded = jwt.verify(token, SECRET_KEY);
-  req.user = decoded;
-
-  const userId = req.user ? req.user.userId : null;
-
-  // TH1. Không đăng nhập
-  if (userId === null) {
-    const { productId, message, fullName } = req.body;
-    if (!productId || !message || !fullName) {
-      return res.status(400).json({
-        status: "error",
-        code: 400,
-        message: "Vui lòng nhập đầy đủ thông tin",
-      });
-    }
-
-    if (!mongoose.Types.ObjectId.isValid(productId)) {
-      return res.status(400).json({
-        status: "error",
-        code: 400,
-        message: "ID sản phẩm không hợp lệ",
-      });
-    }
-
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.split(" ")[1];
     try {
-      // Ktra product
-      const product = await Product.findById(productId);
-      if (!product) {
-        return res.status(404).json({
-          status: "error",
-          code: 404,
-          message: "Sản phẩm không tồn tại",
-        });
-      }
+      const decoded = jwt.verify(token, process.env.SECRET_KEY);
+      userId = decoded.userId;
 
-      // Tạo review
-      const review = await Review.create({
-        productId,
-        message,
-        userId,
-        fullName,
-      });
-
-      // Upload ảnh nếu có
-      let imagesUrl = [];
-      if (req.files && req.files.length > 0) {
-        const imageReviews = req.files.map((f) => ({
-          reviewId: review._id,
-          imageUrl: f.path,
-          imageUrlPublicId: f.filename,
-        }));
-
-        const savedImages = await ImageReview.insertMany(imageReviews);
-        imagesUrl = savedImages.map((img) => img.imageUrl);
-      }
-
-      // Kết nối đến socket
-      const io = getIO();
-      io.emit("newReview", {
-        review,
-        imagesUrl,
-      });
-
-      return res.status(201).json({
-        status: "success",
-        code: 201,
-        message: "Đánh giá sản phẩm thành công",
-        data: {
-          review,
-          imagesUrl,
-        },
-      });
-    } catch (error) {
-      return res.status(500).json({
-        status: "error",
-        code: 500,
-        message: "Lỗi hệ thống: " + error.message,
-      });
+      // Lấy tên người dùng nếu đăng nhập
+      const loggedInUser = await User.findById(userId).select("fullName");
+      if (loggedInUser) userFullName = loggedInUser.fullName;
+    } catch (err) {
+      // Token sai → coi như khách vãng lai
+      console.log("Token không hợp lệ:", err.message);
     }
   }
 
-  // TH2. Có đăng nhập
-  else {
-    const { productId, message } = req.body;
-    if (!productId || !message) {
-      return res.status(400).json({
+  const { productId, message, fullName: guestName } = req.body;
+  const displayName = userFullName || guestName?.trim();
+
+  // === VALIDATION ===
+  if (!productId || !message?.trim() || !displayName) {
+    return res.status(400).json({
+      status: "error",
+      code: 400,
+      message: "Vui lòng nhập đầy đủ thông tin",
+    });
+  }
+
+  if (!mongoose.Types.ObjectId.isValid(productId)) {
+    return res.status(400).json({
+      status: "error",
+      code: 400,
+      message: "ID sản phẩm không hợp lệ",
+    });
+  }
+
+  try {
+    // Kiểm tra sản phẩm tồn tại
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({
         status: "error",
-        code: 400,
-        message: "Vui lòng nhập đầy đủ thông tin",
+        code: 404,
+        message: "Sản phẩm không tồn tại",
       });
     }
 
-    if (!mongoose.Types.ObjectId.isValid(productId)) {
-      return res.status(400).json({
-        status: "error",
-        code: 400,
-        message: "ID sản phẩm không hợp lệ",
-      });
+    // Tạo review
+    const review = await Review.create({
+      productId,
+      message: message.trim(),
+      userId: userId || null,
+      fullName: userId ? null : displayName, // chỉ lưu fullName nếu là khách
+    });
+
+    // Xử lý ảnh
+    let imagesUrl = [];
+    if (req.files?.length > 0) {
+      const imageDocs = req.files.map((file) => ({
+        reviewId: review._id,
+        imageUrl: file.path,
+        imageUrlPublicId: file.filename,
+      }));
+      const saved = await ImageReview.insertMany(imageDocs);
+      imagesUrl = saved.map((img) => img.imageUrl);
     }
 
-    try {
-      // Ktra user
-      const user = await User.findById(userId);
-      if (!user) {
-        return res.status(404).json({
-          status: "error",
-          code: 404,
-          message: "Người dùng không hợp lệ",
-        });
-      }
+    // === TẠO OBJECT ĐÚNG FORMAT GIỐNG API GET ===
+    const formattedReview = {
+      ...review.toObject(),
+      fullName: displayName,
+      imagesUrl,
+    };
 
-      // Ktra product
-      const product = await Product.findById(productId);
-      if (!product) {
-        return res.status(404).json({
-          status: "error",
-          code: 404,
-          message: "Sản phẩm không tồn tại",
-        });
-      }
+    // Xóa trường thừa
+    delete formattedReview.__v;
+  
+    // === GỬI SOCKET REALTIME (chỉ cho người đang xem sản phẩm) ===
+    const io = getIO();
+    io.to(productId.toString()).emit("newReview", formattedReview);
 
-      // Tạo review
-      const review = await Review.create({
-        productId,
-        message,
-        userId,
-      });
-
-      // Upload ảnh nếu có
-      let imagesUrl = [];
-      if (req.files && req.files.length > 0) {
-        const imageReviews = req.files.map((f) => ({
-          reviewId: review._id,
-          imageUrl: f.path,
-          imageUrlPublicId: f.filename,
-        }));
-
-        const savedImages = await ImageReview.insertMany(imageReviews);
-        imagesUrl = savedImages.map((img) => img.imageUrl);
-      }
-
-      // Kết nối đến socket
-      const io = getIO();
-      io.emit("newReview", {
-        review,
-        imagesUrl,
-      });
-
-      return res.status(201).json({
-        status: "success",
-        code: 201,
-        message: "Đánh giá sản phẩm thành công",
-        data: {
-          review,
-          imagesUrl,
-        },
-      });
-    } catch (error) {
-      return res.status(500).json({
-        status: "error",
-        code: 500,
-        message: "Lỗi hệ thống: " + error.message,
-      });
-    }
+    // === TRẢ KẾT QUẢ CHO NGƯỜI GỬI ===
+    return res.status(201).json({
+      status: "success",
+      code: 201,
+      message: "Đánh giá sản phẩm thành công",
+      data: formattedReview,
+    });
+  } catch (error) {
+    console.error("Lỗi postReview:", error);
+    return res.status(500).json({
+      status: "error",
+      code: 500,
+      message: "Lỗi hệ thống: " + error.message,
+    });
   }
 };
 
@@ -264,7 +196,7 @@ const getAllReviewsByProduct = async (req, res) => {
       { $limit: limit },
     ]);
 
-    const totalReviews = await Review.countDocuments({ productId }); 
+    const totalReviews = await Review.countDocuments({ productId });
 
     return res.status(200).json({
       status: "success",
@@ -275,8 +207,8 @@ const getAllReviewsByProduct = async (req, res) => {
         page,
         limit,
         totalReviews,
-        totalPages: Math.ceil( totalReviews / limit)
-      }
+        totalPages: Math.ceil(totalReviews / limit),
+      },
     });
   } catch (error) {
     return res.status(500).json({

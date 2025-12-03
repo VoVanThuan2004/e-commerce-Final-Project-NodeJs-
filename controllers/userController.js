@@ -13,7 +13,7 @@ const getAllUsers = async (req, res) => {
       code: 403,
       message: "Không có quyền truy cập tài nguyên",
     });
-  } 
+  }
 
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 15;
@@ -63,7 +63,6 @@ const getAllUsers = async (req, res) => {
     });
   }
 };
-
 
 // API cập nhật thông tin người dùng
 const updateUser = async (req, res) => {
@@ -119,6 +118,7 @@ const updateUser = async (req, res) => {
       status: "success",
       code: 200,
       message: "Cập nhật thông tin người dùng thành công",
+      data: user
     });
   } catch (error) {
     return res.status(500).json({
@@ -259,9 +259,41 @@ const deleteUploadedFile = async (file) => {
   }
 };
 
+const getLoyaltyPoints = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // 1. Kiểm tra user có tồn tại
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        status: "error",
+        code: 404,
+        message: "Người dùng không hợp lệ",
+      });
+    }
+
+    const loyaltyPoints = user.loyaltyPoints;
+
+    return res.status(200).json({
+      status: "success",
+      code: 200,
+      message: "Lấy điểm tích lũy hiện tại của người dùng",
+      data: loyaltyPoints,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: "error",
+      code: 500,
+      message: "Lỗi hệ thống: " + error.message,
+    });
+  }
+};
+
 module.exports = {
   getAllUsers,
   updateUser,
   getUserProfile,
   updateUserByAdmin,
+  getLoyaltyPoints,
 };

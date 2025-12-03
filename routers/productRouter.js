@@ -37,11 +37,20 @@ router.get("/api/v1/products/suggest/", productController.suggestProduct);
 // API lọc sản phẩm
 router.get("/api/v1/products/filter/", productController.filterProduct);
 
+// API lọc sản phẩm cho admin
+router.get("/api/v1/products-admin/filter/", productController.filterProductAdmin);
+
+
 // API sắp xếp theo name - price
 router.get("/api/v1/products/sort/", productController.sortProduct);
 
 // API xem chi tiết sản phẩm
 router.get("/api/v1/products/:productId/detail", productController.viewDetailProduct);
+
+// API xem chi tiết sản phẩm cho admin
+router.get("/api/v1/products-admin/:productId/detail", productController.viewDetailProductAdmin);
+
+
 
 // API chọn sản phẩm biến thể
 router.get("/api/v1/products/:productId/variants", productController.chooseProductVariant);

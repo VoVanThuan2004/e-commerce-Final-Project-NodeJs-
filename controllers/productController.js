@@ -374,6 +374,121 @@ const suggestProduct = async (req, res) => {
 };
 
 const filterProduct = async (req, res) => {
+  const { q, brandId, categoryId, minPrice, maxPrice, stars, by, sort } =
+    req.query;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const skip = (page - 1) * limit;
+
+  const must = [];
+
+  must.push({ term: { status: true } });
+
+  if (brandId) {
+    must.push({
+      term: { brandId: brandId },
+    });
+  }
+  if (categoryId) {
+    must.push({
+      term: { categoryId: categoryId },
+    });
+  }
+  if (minPrice || maxPrice) {
+    must.push({
+      range: { price: { gte: minPrice || 0, lte: maxPrice || 1000000 } },
+    });
+  }
+
+  if (stars) {
+    must.push({
+      term: { averageStars: stars },
+    });
+  }
+
+  // Nếu có nhập search
+  // Search chỉ trên field name
+  if (q && q.trim()) {
+    const searchQuery = q.trim();
+
+    must.push({
+      bool: {
+        should: [
+          // Ưu tiên kết quả khớp chính xác nhất
+          {
+            match_phrase: {
+              name: {
+                query: searchQuery,
+                boost: 3,
+              },
+            },
+          },
+          // Tìm kiếm với fuzzy matching
+          {
+            match: {
+              name: {
+                query: searchQuery,
+                fuzziness: "AUTO",
+                operator: "and", // yêu cầu tất cả từ phải khớp
+                boost: 2,
+              },
+            },
+          },
+        ],
+      },
+    });
+  }
+
+  // Kết hợp với sort product trong filter
+  // Xử lý sắp xếp
+  const sortField = by === "price" ? "price" : "name.keyword"; // default: name
+  const sortOrder = sort === "desc" ? "desc" : "asc";
+
+  try {
+    const result = await client.search({
+      index: "products",
+      from: skip,
+      size: limit,
+      query: { bool: { must } },
+      sort: [{ [sortField]: sortOrder }],
+      _source: [
+        "name",
+        "price",
+        "defaultImage",
+        "brandId",
+        "categoryId",
+        "status",
+        "averageStars",
+      ], // chỉ lấy các field này
+    });
+
+    const hits = result.hits.hits.map((hit) => ({
+      id: hit._id,
+      ...hit._source,
+    }));
+
+    return res.status(200).json({
+      status: "success",
+      code: 200,
+      message: "Lọc sản phẩm thành công",
+      data: hits,
+      pagination: {
+        total: result.hits.total.value,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(result.hits.total.value / limit),
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: "error",
+      code: 500,
+      message: "Lỗi hệ thống: " + error.message,
+    });
+  }
+};
+
+const filterProductAdmin = async (req, res) => {
   const { q, brandId, categoryId, minPrice, maxPrice, by, sort } = req.query;
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
@@ -449,6 +564,7 @@ const filterProduct = async (req, res) => {
         "brandId",
         "categoryId",
         "status",
+        "description",
         "averageStars",
       ], // chỉ lấy các field này
     });
@@ -611,7 +727,7 @@ const viewDetailProduct = async (req, res) => {
         return {
           ...variant.toObject(),
           images: variantImages,
-          quantity: inventory.quantity,
+          quantity: inventory.quantity - inventory.reversed,
           attributes: formattedAttrs,
         };
       })
@@ -630,6 +746,108 @@ const viewDetailProduct = async (req, res) => {
     return res.status(500).json({
       status: "error",
       code: 500,
+      message: "Lỗi hệ thống: " + error.message,
+    });
+  }
+};
+
+const viewDetailProductAdmin = async (req, res) => {
+  try {
+    const { productId } = req.params;
+
+    const product = await Product.findById(productId).lean();
+    if (!product) {
+      return res.status(404).json({
+        status: "error",
+        message: "Không tìm thấy sản phẩm",
+      });
+    }
+
+    const variants = await ProductVariant.find({
+      productId,
+      isActive: true,
+    }).lean();
+
+    if (variants.length === 0) {
+      return res.json({
+        status: "success",
+        data: {
+          product: { _id: product._id, name: product.name },
+          variants: [],
+        },
+      });
+    }
+
+    const variantIds = variants.map((v) => v._id);
+
+    const [images, variantAttrs, inventories] = await Promise.all([
+      VariantImage.find({ productVariantId: { $in: variantIds } }).lean(),
+      VariantAttribute.find({ productVariantId: { $in: variantIds } })
+        .populate({
+          path: "attributeValueId",
+          populate: { path: "attributeId", select: "attributeName" },
+        })
+        .lean(),
+      Inventory.find({ productVariantId: { $in: variantIds } })
+        .select("productVariantId quantity reversed")
+        .lean(),
+    ]);
+
+    // Nhóm dữ liệu
+    const imagesMap = images.reduce((acc, img) => {
+      (acc[img.productVariantId] ||= []).push({
+        _id: img._id,
+        imageUrl: img.imageUrl,
+      });
+      return acc;
+    }, {});
+
+    const attrsMap = variantAttrs.reduce((acc, va) => {
+      (acc[va.productVariantId] ||= []).push({
+        attributeId: va.attributeValueId.attributeId._id,
+        attribute: va.attributeValueId.attributeId.attributeName,
+        valueId: va.attributeValueId._id,
+        value: va.attributeValueId.value,
+      });
+      return acc;
+    }, {});
+
+    // Tính tồn kho thực tế: quantity - reserved
+    const inventoryMap = inventories.reduce((acc, inv) => {
+      acc[inv.productVariantId] = Math.max(
+        0,
+        (inv.quantity || 0) - (inv.reversed || 0)
+      );
+      return acc;
+    }, {});
+
+    // GỢI Ý: Nếu có biến thể chưa có bản ghi Inventory → mặc định 0
+    const formattedVariants = variants.map((v) => ({
+      _id: v._id,
+      name: v.name,
+      originalPrice: v.originalPrice,
+      sellingPrice: v.sellingPrice,
+      quantity: inventoryMap[v._id] ?? 0, // ← ĐÚNG RỒI, DÙNG TỒN KHO TỪ INVENTORY
+      weight: v.weight || 0,
+      width: v.width || 0,
+      height: v.height || 0,
+      length: v.length || 0,
+      isActive: v.isActive,
+      images: imagesMap[v._id] || [],
+      attributes: attrsMap[v._id] || [],
+    }));
+
+    return res.json({
+      status: "success",
+      data: {
+        product: { _id: product._id, name: product.name },
+        variants: formattedVariants,
+      },
+    });
+  } catch (error) {
+    console.error("Error in viewDetailProductAdmin:", error);
+    return res.status(500).json({
+      status: "error",
       message: "Lỗi hệ thống: " + error.message,
     });
   }
@@ -932,7 +1150,7 @@ const getProductHomePage = async (req, res) => {
     const result = await client.search({
       index: "products",
       from: 0,
-      size: 10,
+      size: 8,
       _source: [
         "name",
         "price",
@@ -1020,8 +1238,10 @@ module.exports = {
   searchProduct,
   suggestProduct,
   filterProduct,
+  filterProductAdmin,
   sortProduct,
   viewDetailProduct,
+  viewDetailProductAdmin,
   chooseProductVariant,
   updateStatusProduct,
   deleteProduct,

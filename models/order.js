@@ -84,6 +84,10 @@ const orderSchema = new mongoose.Schema(
     estimatedDelivery: {
       type: Date,
     },
+    cartSessionId: {
+      type: String,
+      default: null
+    }
   },
   {
     timestamps: true,

@@ -4,7 +4,7 @@ const CartItem = require("../models/cartItem");
 const ProductVariant = require("../models/productVariant");
 const Inventory = require("../models/inventory");
 const VariantImage = require("../models/variantImage");
-const jwt = require('jsonwebtoken');
+const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 require("dotenv").config();
 
@@ -33,32 +33,36 @@ const addToCart = async (req, res) => {
       });
     }
 
-    // if (!userId && !sessionId) {
-    //   return res.status(400).json({
-    //     status: "error",
-    //     code: 400,
-    //     message: "Thiếu sessionId cho người dùng chưa đăng nhập",
-    //   });
-    // }
-
     // === 1. Tìm hoặc tạo giỏ hàng ===
-    let cart = userId
-      ? await Cart.findOne({ userId }).session(session)
-      : await Cart.findOne({ sessionId }).session(session);
+    let cart = null;
 
+    if (userId) {
+      cart = await Cart.findOne({ userId }).session(session);
+    } else if (sessionId) {
+      // Chỉ tìm cart có sessionId KHÁC null và KHÁC rỗng
+      cart = await Cart.findOne({
+        sessionId: sessionId,
+        sessionId: { $ne: null }, // QUAN TRỌNG NHẤT!!!
+      }).session(session);
+    }
+
+    // === Nếu không tìm thấy → tạo mới ===
     if (!cart) {
+      const newSessionId = sessionId ?? crypto.randomUUID();
+
       cart = await Cart.create(
         [
           {
             userId: userId || null,
-            sessionId: userId ? null : sessionId,
+            sessionId: userId ? null : newSessionId,
             expires_at: userId
               ? null
-              : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 ngày
+              : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
           },
         ],
         { session }
       );
+
       cart = cart[0];
     }
 
@@ -156,12 +160,6 @@ const deleteToCart = async (req, res) => {
         .status(404)
         .json({ status: "error", code: 404, message: "Không tìm thấy" });
     }
-
-    // Giải phóng reserved (nếu có)
-    // await Inventory.findOneAndUpdate(
-    //   { productVariantId: cartItem.productVariantId },
-    //   { $inc: { reserved: -cartItem.quantity } }
-    // );
 
     return res.status(200).json({
       status: "success",
@@ -266,7 +264,7 @@ const getCart = async (req, res) => {
     if (userId) {
       cart = await Cart.findOne({ userId });
     } else if (sessionId) {
-      cart = await Cart.findOne({ sessionId });
+      cart = await Cart.findOne({ sessionId, sessionId: { $ne: null }, });
     }
 
     // === Lazy cleanup cho guest ===
@@ -310,7 +308,7 @@ const getCart = async (req, res) => {
         },
       },
       { $unwind: { path: "$inventory", preserveNullAndEmptyArrays: true } },
-      { 
+      {
         $lookup: {
           from: "variantimages",
           localField: "productVariantId",
@@ -332,7 +330,7 @@ const getCart = async (req, res) => {
                   {
                     $gte: [
                       { $ifNull: ["$inventory.quantity", 0] },
-                      { $ifNull: ["$inventory.reserved", 0] },
+                      { $ifNull: ["$inventory.reversed", 0] },
                     ],
                   },
                 ],
@@ -340,7 +338,7 @@ const getCart = async (req, res) => {
               then: {
                 $subtract: [
                   { $ifNull: ["$inventory.quantity", 0] },
-                  { $ifNull: ["$inventory.reserved", 0] },
+                  { $ifNull: ["$inventory.reversed", 0] },
                 ],
               },
               else: 0,

@@ -20,24 +20,17 @@ const createIndexES = require("./config/createIndexES");
 const { initSocket } = require("./config/socket");
 const http = require("http");
 const PORT = process.env.PORT;
+const session = require("express-session");
+const cartRouter = require("./routers/cartRouter");
+const orderRouter = require("./routers/orderRouter");
+const paymentRouter = require("./routers/paymentRouter");
+const dashboardRouter = require("./routers/dashboardRouter");
+const authRouter = require("./routers/authRouter");
+const  syncGHNLocations = require("./services/syncGHNLocations");
+const ghnRouter = require("./routers/ghnRouter");
 
 app.use(cors());
-const bodyParser = require("body-parser");
-
 app.use(express.json());
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: true,
-    cookie: {
-      maxAge: 5 * 24 * 60 * 60 * 1000, // 7 ngày
-      secure: process.env.NODE_ENV === "production", // HTTPS in production
-      httpOnly: true, // Chống XSS
-      sameSite: "lax", // CSRF protection
-    },
-  })
-);
 
 const server = http.createServer(app);
 initSocket(server); // Khởi tạo socket với server
@@ -50,6 +43,7 @@ mongoDB();
   try {
     await initAdminAccount();
     await createIndexES();
+    await syncGHNLocations();
   } catch (error) {
     console.error("Error during role/admin init:", error);
   }
@@ -67,9 +61,14 @@ app.use(reviewRouter);
 app.use(ratingRouter);
 app.use(couponRouter);
 app.use(wishListRouter);
+app.use(addressRouter);
+app.use(cartRouter);
+app.use(orderRouter);
+app.use(paymentRouter);
+app.use(authRouter);
+app.use(dashboardRouter);
+app.use(ghnRouter);
 
-// Kết nối Server
 server.listen(PORT, () => {
   console.log(`http://localhost:${PORT}`);
-  cleanupCartItem();
 });

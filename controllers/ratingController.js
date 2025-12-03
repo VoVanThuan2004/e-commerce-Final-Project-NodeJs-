@@ -7,8 +7,9 @@ const client = require("../config/elasticsearch");
 
 const postRatingProduct = async (req, res) => {
   const userId = req.user.userId;
-
   const { productId, stars } = req.body;
+
+  // Validate input
   if (!mongoose.Types.ObjectId.isValid(productId)) {
     return res.status(400).json({
       status: "error",
@@ -17,110 +18,116 @@ const postRatingProduct = async (req, res) => {
     });
   }
 
-  if (stars > 5 || stars < 1) {
+  if (!stars || stars < 1 || stars > 5 || !Number.isInteger(Number(stars))) {
     return res.status(400).json({
       status: "error",
       code: 400,
-      message: "Số sao không hợp lệ",
+      message: "Số sao phải là số nguyên từ 1 đến 5",
     });
   }
 
-  const session = await mongoose.startSession();
-
   try {
-    await session.startTransaction();
-    
-    // Kiểm tra user & product
+    // Lấy user + product song song
     const [user, product] = await Promise.all([
-      User.findById(userId).session(session),
-      Product.findById(productId).session(session),
+      User.findById(userId).select("fullName avatar"),
+      Product.findById(productId),
     ]);
-    if (!user) {
+
+    if (!user || !product) {
       return res.status(404).json({
         status: "error",
         code: 404,
-        message: "Người dùng không tồn tại",
-      });
-    }
-    if (!product) {
-      return res.status(404).json({
-        status: "error",
-        code: 404,
-        message: "Sản phẩm không tồn tại",
+        message: !user ? "Người dùng không tồn tại" : "Sản phẩm không tồn tại",
       });
     }
 
-    // Tạo rating
-    const rating = await Rating.create([{ productId, userId, stars }], {
-      session,
+    // Tìm rating cũ
+    let rating = await Rating.findOne({
+      userId,
+      productId: product._id,
     });
-    const newRating = rating[0];
 
-    // Tính tổng lại trung bình rating của sản phẩm
+    let ratingData;
+    const isUpdate = !!rating;
+
+    if (isUpdate) {
+      // Update rating cũ
+      rating.stars = Number(stars);
+      rating.updatedAt = new Date();
+      await rating.save();
+      ratingData = rating;
+    } else {
+      // Tạo mới rating
+      const newRating = await Rating.create({
+        productId: product._id,
+        userId,
+        stars: Number(stars),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      ratingData = newRating;
+    }
+
+    // Tính lại rating trung bình
     const stats = await Rating.aggregate([
-      {
-        $match: { productId: new mongoose.Types.ObjectId(productId) },
-      },
+      { $match: { productId: product._id } },
       {
         $group: {
           _id: "$productId",
           averageStars: { $avg: "$stars" },
         },
       },
-    ]).session(session);
+    ]);
 
-    const { averageStars } = stats[0] || { averageStars: 0 };
+    const averageStars = stats[0]?.averageStars || 0;
 
-    await session.commitTransaction();
-    session.endSession();
+    // ===== Sau khi lưu DB =====
 
-    // Cập nhật lên Elastic search
-    await client.update({
-      index: "products",
-      id: product._id.toString(),
-      doc: {
-        averageStars,
-      },
-    });
+    // Cập nhật Elasticsearch
+    client
+      .update({
+        index: "products",
+        id: String(productId),
+        body: {
+          doc: {
+            averageStars: parseFloat(averageStars.toFixed(2)),
+          },
+        },
+      })
+      .catch((e) => console.error("Elasticsearch update failed:", e));
 
-    // Gửi qua socket
+    // Emit socket
     const io = getIO();
     io.emit("newRating", {
-      _id: newRating._id,
-      productId: newRating.productId,
+      _id: ratingData._id,
+      productId: ratingData.productId,
       userId,
       fullName: user.fullName,
       avatar: user.avatar,
-      stars: newRating.stars,
-      createdAt: newRating.createdAt,
-      updatedAt: newRating.updatedAt,
+      stars: ratingData.stars,
+      createdAt: ratingData.createdAt,
+      updatedAt: ratingData.updatedAt,
     });
 
-    return res.status(201).json({
+    return res.status(isUpdate ? 200 : 201).json({
       status: "success",
-      code: 201,
-      message: "Đánh giá sao cho sản phẩm thành công",
+      code: isUpdate ? 200 : 201,
+      message: isUpdate
+        ? "Cập nhật đánh giá thành công"
+        : "Đánh giá sản phẩm thành công",
       data: {
-        _id: newRating._id,
-        productId: newRating.productId,
-        userId,
+        ...ratingData.toObject(),
         fullName: user.fullName,
         avatar: user.avatar,
-        stars: newRating.stars,
-        createdAt: newRating.createdAt,
-        updatedAt: newRating.updatedAt,
       },
     });
   } catch (error) {
-    // Kiểm tra xem transaction có đang active không trước khi abort
-    if (session.inTransaction()) {
-      await session.abortTransaction();
-    }
-    session.endSession();
+    console.error("Lỗi đánh giá sản phẩm:", error);
+
     return res.status(500).json({
       status: "error",
       code: 500,
-      message: "Lỗi hệ thống: " + error.message,
+      message: "Lỗi hệ thống khi đánh giá sản phẩm",
     });
   }
 };
